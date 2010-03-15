@@ -27,6 +27,7 @@
 #include <linux/workqueue.h>
 #include <linux/blktrace_api.h>
 #include <scsi/sg.h>		/* for struct sg_iovec */
+#include <linux/arrays.h>
 
 #define BIO_POOL_SIZE 2
 
@@ -46,6 +47,7 @@ struct biovec_slab {
 	char *name; 
 	struct kmem_cache *slab;
 };
+
 
 /*
  * if you change this list, also change bvec_alloc or things will
@@ -999,6 +1001,14 @@ void bio_check_pages_dirty(struct bio *bio)
 	}
 }
 
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie;
+	unsigned count;
+	unsigned char reason;
+};
+
+extern void (*rec_event)(void *,unsigned int);
 /**
  * bio_endio - end I/O on a bio
  * @bio:	bio
@@ -1027,6 +1037,24 @@ void bio_endio(struct bio *bio, unsigned int bytes_done, int error)
 
 	bio->bi_size -= bytes_done;
 	bio->bi_sector += (bytes_done >> 9);
+
+#ifdef CONFIG_CHOPSTIX
+		if (rec_event) {
+			struct event event;
+			struct event_spec espec;
+			unsigned long eip;
+			
+			espec.reason = 1;/*response */
+
+			eip = bio->bi_end_io;
+			event.event_data=&espec;
+			espec.pc=eip;
+			event.event_type=3; 
+			/* index in the event array currently set up */
+			/* make sure the counters are loaded in the order we want them to show up*/ 
+			(*rec_event)(&event, bytes_done);
+		}
+#endif
 
 	if (bio->bi_end_io)
 		bio->bi_end_io(bio, bytes_done, error);

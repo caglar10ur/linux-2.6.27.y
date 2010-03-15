@@ -53,6 +53,10 @@ struct mutex {
 	struct thread_info	*owner;
 	const char 		*name;
 	void			*magic;
+#else
+#ifdef CONFIG_CHOPSTIX
+	struct thread_info	*owner;
+#endif
 #endif
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	struct lockdep_map	dep_map;

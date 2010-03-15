@@ -1217,6 +1217,14 @@ menu "Instrumentation Support"
 
 source "arch/i386/oprofile/Kconfig"
 
+config CHOPSTIX
+	bool "Chopstix (PlanetLab)"
+	depends on MODULES && OPROFILE
+	help
+	  Chopstix allows you to monitor various events by summarizing them
+	  in lossy data structures and transferring these data structures
+	  into user space. If in doubt, say "N".
+
 config KPROBES
 	bool "Kprobes (EXPERIMENTAL)"
 	depends on KALLSYMS && EXPERIMENTAL && MODULES

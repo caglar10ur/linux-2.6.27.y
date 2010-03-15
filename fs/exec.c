@@ -27,6 +27,7 @@
 #include <linux/mman.h>
 #include <linux/a.out.h>
 #include <linux/stat.h>
+#include <linux/dcookies.h>
 #include <linux/fcntl.h>
 #include <linux/smp_lock.h>
 #include <linux/init.h>
@@ -38,7 +39,7 @@
 #include <linux/binfmts.h>
 #include <linux/swap.h>
 #include <linux/utsname.h>
-#include <linux/pid_namespace.h>
+/*#include <linux/pid_namespace.h>*/
 #include <linux/module.h>
 #include <linux/namei.h>
 #include <linux/proc_fs.h>
@@ -488,6 +489,13 @@ struct file *open_exec(const char *name)
 
 	if (!err) {
 		struct inode *inode = nd.dentry->d_inode;
+#ifdef CONFIG_CHOPSTIX
+		unsigned long cookie;
+        extern void (*rec_event)(void *, unsigned int);
+		if (rec_event && !nd.dentry->d_cookie)
+			get_dcookie(nd.dentry, nd.mnt, &cookie);
+#endif
+
 		file = ERR_PTR(-EACCES);
 		if (!(nd.mnt->mnt_flags & MNT_NOEXEC) &&
 		    S_ISREG(inode->i_mode)) {
@@ -627,8 +635,10 @@ static int de_thread(struct task_struct *tsk)
 	 * Reparenting needs write_lock on tasklist_lock,
 	 * so it is safe to do it under read_lock.
 	 */
+	/*
 	if (unlikely(tsk->group_leader == child_reaper(tsk)))
 		tsk->nsproxy->pid_ns->child_reaper = tsk;
+		*/
 
 	zap_other_threads(tsk);
 	read_unlock(&tasklist_lock);

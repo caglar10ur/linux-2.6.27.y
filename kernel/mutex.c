@@ -18,6 +18,17 @@
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/debug_locks.h>
+#include <linux/arrays.h>
+
+#undef CONFIG_CHOPSTIX
+#ifdef CONFIG_CHOPSTIX
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie;
+	unsigned count;
+	unsigned char reason;
+};
+#endif
 
 /*
  * In the DEBUG case we are using the "NULL fastpath" for mutexes,
@@ -43,6 +54,9 @@ void
 __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
 {
 	atomic_set(&lock->count, 1);
+#ifdef CONFIG_CHOPSTIX
+	lock->owner=NULL;
+#endif
 	spin_lock_init(&lock->wait_lock);
 	INIT_LIST_HEAD(&lock->wait_list);
 
@@ -88,6 +102,7 @@ void inline fastcall __sched mutex_lock(struct mutex *lock)
 	 * The locking fastpath is the 1->0 transition from
 	 * 'unlocked' into 'locked' state.
 	 */
+
 	__mutex_fastpath_lock(&lock->count, __mutex_lock_slowpath);
 }
 
@@ -168,6 +183,27 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass)
 		}
 		__set_task_state(task, state);
 
+#ifdef CONFIG_CHOPSTIX
+		if (rec_event) {
+			if (lock->owner) {
+				struct event event;
+				struct event_spec espec;
+				struct task_struct *p = lock->owner->task;
+				/*spin_lock(&p->alloc_lock);*/
+				espec.reason = 0; /* lock */
+				event.event_data=&espec;
+				event.task = p;
+				espec.pc=lock;
+				event.event_type=5; 
+				(*rec_event)(&event, 1);
+				/*spin_unlock(&p->alloc_lock);*/
+
+			}
+			else 
+				BUG();
+		}
+#endif
+
 		/* didnt get the lock, go to sleep: */
 		spin_unlock_mutex(&lock->wait_lock, flags);
 		schedule();
@@ -177,6 +213,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass)
 	/* got the lock - rejoice! */
 	mutex_remove_waiter(lock, &waiter, task_thread_info(task));
 	debug_mutex_set_owner(lock, task_thread_info(task));
+#ifdef CONFIG_CHOPSTIX
+	lock->owner = task_thread_info(task);
+#endif
 
 	/* set it to 0 if there are no waiters left: */
 	if (likely(list_empty(&lock->wait_list)))
@@ -202,6 +241,7 @@ void __sched
 mutex_lock_nested(struct mutex *lock, unsigned int subclass)
 {
 	might_sleep();
+
 	__mutex_lock_common(lock, TASK_UNINTERRUPTIBLE, subclass);
 }
 
@@ -211,6 +251,7 @@ int __sched
 mutex_lock_interruptible_nested(struct mutex *lock, unsigned int subclass)
 {
 	might_sleep();
+
 	return __mutex_lock_common(lock, TASK_INTERRUPTIBLE, subclass);
 }
 
@@ -246,6 +287,23 @@ __mutex_unlock_common_slowpath(atomic_t *lock_count, int nested)
 
 		debug_mutex_wake_waiter(lock, waiter);
 
+#ifdef CONFIG_CHOPSTIX
+		if (rec_event) {
+			if (lock->owner) {
+				struct event event;
+				struct event_spec espec;
+
+				espec.reason = 1; /* unlock */
+				event.event_data=&espec;
+				event.task = lock->owner->task;
+				espec.pc=lock;
+				event.event_type=5; 
+				(*rec_event)(&event, 1);
+			}
+			else 
+				BUG();
+		}
+#endif
 		wake_up_process(waiter->task);
 	}
 

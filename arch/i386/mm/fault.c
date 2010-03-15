@@ -60,6 +60,15 @@ static inline int notify_page_fault(struct pt_regs *regs, long err)
 	                                  DIE_PAGE_FAULT, &args);
 }
 
+
+extern void (*rec_event)(void *,unsigned int);
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie; 
+	unsigned count;
+	unsigned char reason;
+};
+
 /*
  * Return EIP plus the CS segment base.  The segment limit is also
  * adjusted, clamped to the kernel/user address space (whichever is
@@ -296,6 +305,8 @@ static inline int vmalloc_fault(unsigned long address)
  *	bit 3 == 1 means use of reserved bit detected
  *	bit 4 == 1 means fault was an instruction fetch
  */
+
+
 fastcall void __kprobes do_page_fault(struct pt_regs *regs,
 				      unsigned long error_code)
 {

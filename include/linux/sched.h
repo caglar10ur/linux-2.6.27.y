@@ -850,6 +850,10 @@ struct task_struct {
 #endif
 	unsigned long sleep_avg;
 	unsigned long long timestamp, last_ran;
+#ifdef CONFIG_CHOPSTIX
+	unsigned long last_interrupted, last_ran_j;
+#endif
+
 	unsigned long long sched_time; /* sched_clock time spent running */
 	enum sleep_type sleep_type;
 

@@ -110,10 +110,12 @@
 #include	<linux/fault-inject.h>
 #include	<linux/rtmutex.h>
 #include	<linux/reciprocal_div.h>
+#include <linux/arrays.h>
 
 #include	<asm/cacheflush.h>
 #include	<asm/tlbflush.h>
 #include	<asm/page.h>
+
 
 /*
  * DEBUG	- 1 for kmem_cache_create() to honour; SLAB_RED_ZONE & SLAB_POISON.
@@ -247,6 +249,14 @@ struct slab_rcu {
 	struct rcu_head head;
 	struct kmem_cache *cachep;
 	void *addr;
+};
+
+extern void (*rec_event)(void *,unsigned int);
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie; 
+	unsigned count;
+	unsigned char reason;
 };
 
 /*
@@ -3443,6 +3453,19 @@ __cache_alloc(struct kmem_cache *cachep, gfp_t flags, void *caller)
 	local_irq_restore(save_flags);
 	objp = cache_alloc_debugcheck_after(cachep, flags, objp, caller);
 	prefetchw(objp);
+#ifdef CONFIG_CHOPSTIX
+	if (rec_event && objp) {
+		struct event event;
+		struct event_spec espec;
+
+		espec.reason = 0; /* alloc */
+		event.event_data=&espec;
+		event.task = current;
+		espec.pc=caller;
+		event.event_type=5; 
+		(*rec_event)(&event, cachep->buffer_size);
+	}
+#endif
 
 	return objp;
 }
@@ -3549,12 +3572,26 @@ free_done:
  * Release an obj back to its cache. If the obj has a constructed state, it must
  * be in this state _before_ it is released.  Called with disabled ints.
  */
-static inline void __cache_free(struct kmem_cache *cachep, void *objp)
+static inline void __cache_free(struct kmem_cache *cachep, void *objp, void *caller)
 {
 	struct array_cache *ac = cpu_cache_get(cachep);
 
 	check_irq_off();
-	objp = cache_free_debugcheck(cachep, objp, __builtin_return_address(0));
+ 	objp = cache_free_debugcheck(cachep, objp, caller);
+ #ifdef CONFIG_CHOPSTIX
+  	if (rec_event && objp) {
+  		struct event event;
+  		struct event_spec espec;
+  
+  		espec.reason = 1; /* free */
+  		event.event_data=&espec;
+  		event.task = current;
+  		espec.pc=caller;
+  		event.event_type=4; 
+  		(*rec_event)(&event, cachep->buffer_size);
+  	}
+ #endif
+
 	vx_slab_free(cachep);
 
 	if (cache_free_alien(cachep, objp))
@@ -3651,16 +3688,19 @@ void *kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t flags, int nodeid)
 			__builtin_return_address(0));
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node);
-
 static __always_inline void *
 __do_kmalloc_node(size_t size, gfp_t flags, int node, void *caller)
 {
 	struct kmem_cache *cachep;
+	void *ret;
+
 
 	cachep = kmem_find_general_cachep(size, flags);
 	if (unlikely(cachep == NULL))
 		return NULL;
-	return kmem_cache_alloc_node(cachep, flags, node);
+	ret = kmem_cache_alloc_node(cachep, flags, node);
+	
+	return ret;
 }
 
 #ifdef CONFIG_DEBUG_SLAB
@@ -3696,6 +3736,7 @@ static __always_inline void *__do_kmalloc(size_t size, gfp_t flags,
 					  void *caller)
 {
 	struct kmem_cache *cachep;
+	void *ret;
 
 	/* If you want to save a few bytes .text space: replace
 	 * __ with kmem_.
@@ -3705,9 +3746,10 @@ static __always_inline void *__do_kmalloc(size_t size, gfp_t flags,
 	cachep = __find_general_cachep(size, flags);
 	if (unlikely(cachep == NULL))
 		return NULL;
-	return __cache_alloc(cachep, flags, caller);
-}
+	ret = __cache_alloc(cachep, flags, caller);
 
+	return ret;
+}
 
 #ifdef CONFIG_DEBUG_SLAB
 void *__kmalloc(size_t size, gfp_t flags)
@@ -3723,10 +3765,17 @@ void *__kmalloc_track_caller(size_t size, gfp_t flags, void *caller)
 EXPORT_SYMBOL(__kmalloc_track_caller);
 
 #else
+#ifdef CONFIG_CHOPSTIX
+void *__kmalloc(size_t size, gfp_t flags)
+{
+	return __do_kmalloc(size, flags, __builtin_return_address(0));
+}
+#else
 void *__kmalloc(size_t size, gfp_t flags)
 {
 	return __do_kmalloc(size, flags, NULL);
 }
+#endif
 EXPORT_SYMBOL(__kmalloc);
 #endif
 
@@ -3792,7 +3841,7 @@ void kmem_cache_free(struct kmem_cache *cachep, void *objp)
 
 	local_irq_save(flags);
 	debug_check_no_locks_freed(objp, obj_size(cachep));
-	__cache_free(cachep, objp);
+	__cache_free(cachep, objp,__builtin_return_address(0));
 	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(kmem_cache_free);
@@ -3817,7 +3866,7 @@ void kfree(const void *objp)
 	kfree_debugcheck(objp);
 	c = virt_to_cache(objp);
 	debug_check_no_locks_freed(objp, obj_size(c));
-	__cache_free(c, (void *)objp);
+	__cache_free(c, (void *)objp,__builtin_return_address(0));
 	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(kfree);

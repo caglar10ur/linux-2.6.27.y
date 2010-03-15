@@ -10,7 +10,7 @@
  *  1998-11-19	Implemented schedule_timeout() and related stuff
  *		by Andrea Arcangeli
  *  2002-01-04	New ultra-scalable O(1) scheduler by Ingo Molnar:
- *		hybrid priority-list and round-robin design with
+ *		hybrid priority-list and round-robin deventn with
  *		an array-switch method of distributing timeslices
  *		and per-CPU runqueues.  Cleanups and useful suggestions
  *		by Davide Libenzi, preemptible kernel bits by Robert Love.
@@ -23,6 +23,7 @@
 #include <linux/nmi.h>
 #include <linux/init.h>
 #include <asm/uaccess.h>
+#include <linux/arrays.h>
 #include <linux/highmem.h>
 #include <linux/smp_lock.h>
 #include <asm/mmu_context.h>
@@ -58,6 +59,9 @@
 #include <asm/unistd.h>
 #include <linux/vs_sched.h>
 #include <linux/vs_cvirt.h>
+
+#define INTERRUPTIBLE   -1
+#define RUNNING         0
 
 /*
  * Scheduler clock - returns current time in nanosec units.
@@ -431,6 +435,7 @@ static inline struct rq *__task_rq_lock(struct task_struct *p)
 
 repeat_lock_task:
 	rq = task_rq(p);
+
 	spin_lock(&rq->lock);
 	if (unlikely(rq != task_rq(p))) {
 		spin_unlock(&rq->lock);
@@ -1741,6 +1746,21 @@ void fastcall sched_fork(struct task_struct *p, int clone_flags)
 	 * event cannot wake it up and insert it on the runqueue either.
 	 */
 	p->state = TASK_RUNNING;
+#ifdef CONFIG_CHOPSTIX
+    /* The jiffy of last interruption */
+    if (p->state & TASK_UNINTERRUPTIBLE) {
+				p->last_interrupted=jiffies;
+	}
+    else
+    if (p->state & TASK_INTERRUPTIBLE) {
+				p->last_interrupted=INTERRUPTIBLE;
+	}
+    else
+	    p->last_interrupted=RUNNING;
+
+    /* The jiffy of last execution */ 
+	p->last_ran_j=jiffies;
+#endif
 
 	/*
 	 * Make sure we do not leak PI boosting priority to the child:
@@ -3608,6 +3628,7 @@ EXPORT_SYMBOL(sub_preempt_count);
 
 #endif
 
+
 static inline int interactive_sleep(enum sleep_type sleep_type)
 {
 	return (sleep_type == SLEEP_INTERACTIVE ||
@@ -3617,16 +3638,28 @@ static inline int interactive_sleep(enum sleep_type sleep_type)
 /*
  * schedule() is the main scheduler function.
  */
+
+#ifdef CONFIG_CHOPSTIX
+extern void (*rec_event)(void *,unsigned int);
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie;
+	unsigned int count;
+	unsigned int reason;
+};
+#endif
+
 asmlinkage void __sched schedule(void)
 {
 	struct task_struct *prev, *next;
 	struct prio_array *array;
 	struct list_head *queue;
 	unsigned long long now;
-	unsigned long run_time;
+	unsigned long run_time, diff;
 	int cpu, idx, new_prio;
 	long *switch_count;
 	struct rq *rq;
+	int sampling_reason;
 
 	/*
 	 * Test if we are atomic.  Since do_exit() needs to call into
@@ -3680,6 +3713,7 @@ need_resched_nonpreemptible:
 	switch_count = &prev->nivcsw;
 	if (prev->state && !(preempt_count() & PREEMPT_ACTIVE)) {
 		switch_count = &prev->nvcsw;
+
 		if (unlikely((prev->state & TASK_INTERRUPTIBLE) &&
 				unlikely(signal_pending(prev))))
 			prev->state = TASK_RUNNING;
@@ -3689,6 +3723,17 @@ need_resched_nonpreemptible:
 				vx_uninterruptible_inc(prev);
 			}
 			deactivate_task(prev, rq);
+#ifdef CONFIG_CHOPSTIX
+            /* An uninterruptible process just yielded. Record the current jiffie */
+			if (prev->state & TASK_UNINTERRUPTIBLE) {
+				prev->last_interrupted=jiffies;
+			}
+            /* An interruptible process just yielded, or it got preempted. 
+             * Mark it as interruptible */
+			else if (prev->state & TASK_INTERRUPTIBLE) {
+				prev->last_interrupted=INTERRUPTIBLE;
+			}
+#endif
 		}
 	}
 
@@ -3765,6 +3810,40 @@ switch_tasks:
 		prev->sleep_avg = 0;
 	prev->timestamp = prev->last_ran = now;
 
+#ifdef CONFIG_CHOPSTIX
+	/* Run only if the Chopstix module so decrees it */
+	if (rec_event) {
+		prev->last_ran_j = jiffies;
+		if (next->last_interrupted!=INTERRUPTIBLE) {
+			if (next->last_interrupted!=RUNNING) {
+				diff = (jiffies-next->last_interrupted);
+				sampling_reason = 0;/* BLOCKING */
+			}
+			else {
+				diff = jiffies-next->last_ran_j; 
+				sampling_reason = 1;/* PREEMPTION */
+			}
+
+			if (diff >= HZ/10) {
+				struct event event;
+				struct event_spec espec;
+                struct pt_regs *regs;
+                regs = task_pt_regs(current);
+
+				espec.reason = sampling_reason;
+				event.event_data=&espec;
+				event.task=next;
+				espec.pc=regs->eip;
+				event.event_type=2; 
+				/* index in the event array currently set up */
+				/* make sure the counters are loaded in the order we want them to show up*/ 
+				(*rec_event)(&event, diff);
+			}
+		}
+        /* next has been elected to run */
+		next->last_interrupted=0;
+	}
+#endif
 	sched_info_switch(prev, next);
 	if (likely(prev != next)) {
 		next->timestamp = next->last_ran = now;
@@ -4664,6 +4743,7 @@ long sched_setaffinity(pid_t pid, cpumask_t new_mask)
 	get_task_struct(p);
 	read_unlock(&tasklist_lock);
 
+
 	retval = -EPERM;
 	if ((current->euid != p->euid) && (current->euid != p->uid) &&
 			!capable(CAP_SYS_NICE))
@@ -5032,6 +5112,7 @@ long sys_sched_rr_get_interval(pid_t pid, struct timespec __user *interval)
 	jiffies_to_timespec(p->policy == SCHED_FIFO ?
 				0 : task_timeslice(p), &t);
 	read_unlock(&tasklist_lock);
+
 	retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
 out_nounlock:
 	return retval;
@@ -7274,4 +7355,21 @@ void set_curr_task(int cpu, struct task_struct *p)
 	cpu_curr(cpu) = p;
 }
 
+#endif
+
+#ifdef CONFIG_CHOPSTIX
+void (*rec_event)(void *,unsigned int) = NULL;
+
+/* To support safe calling from asm */
+asmlinkage void rec_event_asm (struct event *event_signature_in, unsigned int count) {
+    struct pt_regs *regs;
+    struct event_spec *es = event_signature_in->event_data;
+    regs = task_pt_regs(current);
+	event_signature_in->task=current;
+	es->pc=regs->eip;
+    event_signature_in->count=1;
+    (*rec_event)(event_signature_in, count);
+}
+EXPORT_SYMBOL(rec_event);
+EXPORT_SYMBOL(in_sched_functions);
 #endif
