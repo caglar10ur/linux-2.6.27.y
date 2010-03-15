@@ -237,6 +237,7 @@ typedef __u32 kernel_cap_t;
    arbitrary SCSI commands */
 /* Allow setting encryption key on loopback filesystem */
 /* Allow setting zone reclaim policy */
+/* Allow the selection of a security context */
 
 #define CAP_SYS_ADMIN        21
 
@@ -289,6 +290,11 @@ typedef __u32 kernel_cap_t;
 #define CAP_AUDIT_WRITE      29
 
 #define CAP_AUDIT_CONTROL    30
+
+/* Allow context manipulations */
+/* Allow changing context info on files */
+
+#define CAP_CONTEXT	     31
 
 #ifdef __KERNEL__
 /* 

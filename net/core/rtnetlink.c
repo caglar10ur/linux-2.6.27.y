@@ -537,6 +537,8 @@ static int rtnl_dump_ifinfo(struct sk_buff *skb, struct netlink_callback *cb)
 
 	idx = 0;
 	for_each_netdev(dev) {
+		if (!nx_dev_visible(skb->sk->sk_nx_info, dev))
+			continue;
 		if (idx < s_idx)
 			goto cont;
 		if (rtnl_fill_ifinfo(skb, dev, RTM_NEWLINK,
@@ -796,6 +798,9 @@ void rtmsg_ifinfo(int type, struct net_device *dev, unsigned change)
 {
 	struct sk_buff *skb;
 	int err = -ENOBUFS;
+
+	if (!nx_dev_visible(current->nx_info, dev))
+		return;
 
 	skb = nlmsg_new(if_nlmsg_size(), GFP_KERNEL);
 	if (skb == NULL)

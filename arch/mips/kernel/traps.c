@@ -302,8 +302,9 @@ void show_registers(struct pt_regs *regs)
 {
 	show_regs(regs);
 	print_modules();
-	printk("Process %s (pid: %d, threadinfo=%p, task=%p)\n",
-	        current->comm, current->pid, current_thread_info(), current);
+	printk("Process %s (pid: %d:#%u, threadinfo=%p, task=%p)\n",
+		current->comm, current->pid, current->xid,
+		current_thread_info(), current);
 	show_stacktrace(current, regs);
 	show_code((unsigned int *) regs->cp0_epc);
 	printk("\n");

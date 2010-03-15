@@ -26,22 +26,31 @@
 #include <linux/syscalls.h>
 #include <linux/rcupdate.h>
 #include <linux/audit.h>
+#include <linux/vs_base.h>
+#include <linux/vs_limit.h>
+#include <linux/vs_dlimit.h>
+#include <linux/vs_tag.h>
+#include <linux/vs_cowbl.h>
 
 int vfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	int retval = -ENODEV;
 
 	if (dentry) {
+		struct super_block *sb = dentry->d_sb;
+
 		retval = -ENOSYS;
-		if (dentry->d_sb->s_op->statfs) {
+		if (sb->s_op->statfs) {
 			memset(buf, 0, sizeof(*buf));
 			retval = security_sb_statfs(dentry);
 			if (retval)
 				return retval;
-			retval = dentry->d_sb->s_op->statfs(dentry, buf);
+			retval = sb->s_op->statfs(dentry, buf);
 			if (retval == 0 && buf->f_frsize == 0)
 				buf->f_frsize = buf->f_bsize;
 		}
+		if (!vx_check(0, VS_ADMIN|VS_WATCH))
+			vx_vsi_statfs(sb, buf);
 	}
 	return retval;
 }
@@ -248,7 +257,7 @@ static long do_sys_truncate(const char __user * path, loff_t length)
 		goto dput_and_out;
 
 	error = -EROFS;
-	if (IS_RDONLY(inode))
+	if (IS_RDONLY(inode) || MNT_IS_RDONLY(nd.mnt))
 		goto dput_and_out;
 
 	error = -EPERM;
@@ -397,7 +406,7 @@ asmlinkage long sys_faccessat(int dfd, const char __user *filename, int mode)
 	   special_file(nd.dentry->d_inode->i_mode))
 		goto out_path_release;
 
-	if(IS_RDONLY(nd.dentry->d_inode))
+	if(IS_RDONLY(nd.dentry->d_inode) || MNT_IS_RDONLY(nd.mnt))
 		res = -EROFS;
 
 out_path_release:
@@ -511,7 +520,7 @@ asmlinkage long sys_fchmod(unsigned int fd, mode_t mode)
 	audit_inode(NULL, inode);
 
 	err = -EROFS;
-	if (IS_RDONLY(inode))
+	if (IS_RDONLY(inode) || MNT_IS_RDONLY(file->f_vfsmnt))
 		goto out_putf;
 	err = -EPERM;
 	if (IS_IMMUTABLE(inode) || IS_APPEND(inode))
@@ -541,11 +550,11 @@ asmlinkage long sys_fchmodat(int dfd, const char __user *filename,
 	error = __user_walk_fd(dfd, filename, LOOKUP_FOLLOW, &nd);
 	if (error)
 		goto out;
-	inode = nd.dentry->d_inode;
 
-	error = -EROFS;
-	if (IS_RDONLY(inode))
+	error = cow_check_and_break(&nd);
+	if (error)
 		goto dput_and_out;
+	inode = nd.dentry->d_inode;
 
 	error = -EPERM;
 	if (IS_IMMUTABLE(inode) || IS_APPEND(inode))
@@ -570,7 +579,8 @@ asmlinkage long sys_chmod(const char __user *filename, mode_t mode)
 	return sys_fchmodat(AT_FDCWD, filename, mode);
 }
 
-static int chown_common(struct dentry * dentry, uid_t user, gid_t group)
+static int chown_common(struct dentry *dentry, struct vfsmount *mnt,
+	uid_t user, gid_t group)
 {
 	struct inode * inode;
 	int error;
@@ -582,7 +592,7 @@ static int chown_common(struct dentry * dentry, uid_t user, gid_t group)
 		goto out;
 	}
 	error = -EROFS;
-	if (IS_RDONLY(inode))
+	if (IS_RDONLY(inode) || MNT_IS_RDONLY(mnt))
 		goto out;
 	error = -EPERM;
 	if (IS_IMMUTABLE(inode) || IS_APPEND(inode))
@@ -590,11 +600,11 @@ static int chown_common(struct dentry * dentry, uid_t user, gid_t group)
 	newattrs.ia_valid =  ATTR_CTIME;
 	if (user != (uid_t) -1) {
 		newattrs.ia_valid |= ATTR_UID;
-		newattrs.ia_uid = user;
+		newattrs.ia_uid = dx_map_uid(user);
 	}
 	if (group != (gid_t) -1) {
 		newattrs.ia_valid |= ATTR_GID;
-		newattrs.ia_gid = group;
+		newattrs.ia_gid = dx_map_gid(group);
 	}
 	if (!S_ISDIR(inode->i_mode))
 		newattrs.ia_valid |= ATTR_KILL_SUID|ATTR_KILL_SGID;
@@ -613,7 +623,11 @@ asmlinkage long sys_chown(const char __user * filename, uid_t user, gid_t group)
 	error = user_path_walk(filename, &nd);
 	if (error)
 		goto out;
-	error = chown_common(nd.dentry, user, group);
+#ifdef CONFIG_VSERVER_COWBL
+	error = cow_check_and_break(&nd);
+	if (!error)
+#endif
+		error = chown_common(nd.dentry, nd.mnt, user, group);
 	path_release(&nd);
 out:
 	return error;
@@ -633,7 +647,11 @@ asmlinkage long sys_fchownat(int dfd, const char __user *filename, uid_t user,
 	error = __user_walk_fd(dfd, filename, follow, &nd);
 	if (error)
 		goto out;
-	error = chown_common(nd.dentry, user, group);
+#ifdef CONFIG_VSERVER_COWBL
+	error = cow_check_and_break(&nd);
+	if (!error)
+#endif
+		error = chown_common(nd.dentry, nd.mnt, user, group);
 	path_release(&nd);
 out:
 	return error;
@@ -647,7 +665,11 @@ asmlinkage long sys_lchown(const char __user * filename, uid_t user, gid_t group
 	error = user_path_walk_link(filename, &nd);
 	if (error)
 		goto out;
-	error = chown_common(nd.dentry, user, group);
+#ifdef CONFIG_VSERVER_COWBL
+	error = cow_check_and_break(&nd);
+	if (!error)
+#endif
+		error = chown_common(nd.dentry, nd.mnt, user, group);
 	path_release(&nd);
 out:
 	return error;
@@ -666,7 +688,7 @@ asmlinkage long sys_fchown(unsigned int fd, uid_t user, gid_t group)
 
 	dentry = file->f_path.dentry;
 	audit_inode(NULL, dentry->d_inode);
-	error = chown_common(dentry, user, group);
+	error = chown_common(dentry, file->f_vfsmnt, user, group);
 	fput(file);
 out:
 	return error;
@@ -893,6 +915,7 @@ repeat:
 	FD_SET(fd, fdt->open_fds);
 	FD_CLR(fd, fdt->close_on_exec);
 	files->next_fd = fd + 1;
+	vx_openfd_inc(fd);
 #if 1
 	/* Sanity check */
 	if (fdt->fd[fd] != NULL) {
@@ -915,6 +938,7 @@ static void __put_unused_fd(struct files_struct *files, unsigned int fd)
 	__FD_CLR(fd, fdt->open_fds);
 	if (fd < files->next_fd)
 		files->next_fd = fd;
+	vx_openfd_dec(fd);
 }
 
 void fastcall put_unused_fd(unsigned int fd)

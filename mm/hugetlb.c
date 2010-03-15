@@ -19,6 +19,7 @@
 #include <asm/pgtable.h>
 
 #include <linux/hugetlb.h>
+#include <linux/vs_memory.h>
 #include "internal.h"
 
 const unsigned long hugetlb_zero = 0, hugetlb_infinity = ~0UL;

@@ -73,6 +73,9 @@
 #include <linux/poll.h>
 #include <linux/nsproxy.h>
 #include <linux/oom.h>
+#include <linux/vs_context.h>
+#include <linux/vs_network.h>
+
 #include "internal.h"
 
 /* NOTE:
@@ -1049,6 +1052,8 @@ static struct inode *proc_pid_make_inode(struct super_block * sb, struct task_st
 		inode->i_uid = task->euid;
 		inode->i_gid = task->egid;
 	}
+	/* procfs is xid tagged */
+	inode->i_tag = (tag_t)vx_task_xid(task);
 	security_task_to_inode(task, inode);
 
 out:
@@ -1082,6 +1087,8 @@ static int pid_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat
 
 /* dentry stuff */
 
+static unsigned name_to_int(struct dentry *dentry);
+
 /*
  *	Exceptional case: normally we are not allowed to unhash a busy
  * directory. In this case, however, we can do it - no aliasing problems
@@ -1102,6 +1109,12 @@ static int pid_revalidate(struct dentry *dentry, struct nameidata *nd)
 	struct inode *inode = dentry->d_inode;
 	struct task_struct *task = get_proc_task(inode);
 	if (task) {
+		unsigned pid = name_to_int(dentry);
+		if (pid != ~0U && pid != vx_map_pid(task->pid)) {
+			put_task_struct(task);
+			goto drop;
+		}
+
 		if ((inode->i_mode == (S_IFDIR|S_IRUGO|S_IXUGO)) ||
 		    task_dumpable(task)) {
 			inode->i_uid = task->euid;
@@ -1115,6 +1128,7 @@ static int pid_revalidate(struct dentry *dentry, struct nameidata *nd)
 		put_task_struct(task);
 		return 1;
 	}
+drop:
 	d_drop(dentry);
 	return 0;
 }
@@ -1595,6 +1609,13 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
 	if (!task)
 		goto out_no_task;
 
+	/* TODO: maybe we can come up with a generic approach? */
+	if (task_vx_flags(task, VXF_HIDE_VINFO, 0) &&
+		(dentry->d_name.len == 5) &&
+		(!memcmp(dentry->d_name.name, "vinfo", 5) ||
+		!memcmp(dentry->d_name.name, "ninfo", 5)))
+		goto out;
+
 	/*
 	 * Yes, it does not scale. And it should not. Don't add
 	 * new entries into /proc/<tgid>/ without very good reasons.
@@ -1790,14 +1811,14 @@ static int proc_self_readlink(struct dentry *dentry, char __user *buffer,
 			      int buflen)
 {
 	char tmp[PROC_NUMBUF];
-	sprintf(tmp, "%d", current->tgid);
+	sprintf(tmp, "%d", vx_map_tgid(current->tgid));
 	return vfs_readlink(dentry,buffer,buflen,tmp);
 }
 
 static void *proc_self_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
 	char tmp[PROC_NUMBUF];
-	sprintf(tmp, "%d", current->tgid);
+	sprintf(tmp, "%d", vx_map_tgid(current->tgid));
 	return ERR_PTR(vfs_follow_link(nd,tmp));
 }
 
@@ -1891,7 +1912,7 @@ out_iput:
 static struct dentry *proc_base_lookup(struct inode *dir, struct dentry *dentry)
 {
 	struct dentry *error;
-	struct task_struct *task = get_proc_task(dir);
+	struct task_struct *task = get_proc_task_real(dir);
 	const struct pid_entry *p, *last;
 
 	error = ERR_PTR(-ENOENT);
@@ -1956,6 +1977,9 @@ static int proc_pid_io_accounting(struct task_struct *task, char *buffer)
 static const struct file_operations proc_task_operations;
 static const struct inode_operations proc_task_inode_operations;
 
+extern int proc_pid_vx_info(struct task_struct *, char *);
+extern int proc_pid_nx_info(struct task_struct *, char *);
+
 static const struct pid_entry tgid_base_stuff[] = {
 	DIR("task",       S_IRUGO|S_IXUGO, task),
 	DIR("fd",         S_IRUSR|S_IXUSR, fd),
@@ -1995,6 +2019,8 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_CPUSETS
 	REG("cpuset",     S_IRUGO, cpuset),
 #endif
+	INF("vinfo",      S_IRUGO, pid_vx_info),
+	INF("ninfo",	  S_IRUGO, pid_nx_info),
 	INF("oom_score",  S_IRUGO, oom_score),
 	REG("oom_adj",    S_IRUGO|S_IWUSR, oom_adjust),
 #ifdef CONFIG_AUDITSYSCALL
@@ -2141,9 +2167,11 @@ struct dentry *proc_pid_lookup(struct inode *dir, struct dentry * dentry, struct
 	tgid = name_to_int(dentry);
 	if (tgid == ~0U)
 		goto out;
+	if (vx_current_initpid(tgid))
+		goto out;
 
 	rcu_read_lock();
-	task = find_task_by_pid(tgid);
+	task = vx_find_proc_task_by_pid(tgid);
 	if (task)
 		get_task_struct(task);
 	rcu_read_unlock();
@@ -2198,7 +2226,7 @@ static int proc_pid_fill_cache(struct file *filp, void *dirent, filldir_t filldi
 	struct task_struct *task, int tgid)
 {
 	char name[PROC_NUMBUF];
-	int len = snprintf(name, sizeof(name), "%d", tgid);
+	int len = snprintf(name, sizeof(name), "%d", vx_map_tgid(tgid));
 	return proc_fill_cache(filp, dirent, filldir, name, len,
 				proc_pid_instantiate, task, NULL);
 }
@@ -2207,7 +2235,7 @@ static int proc_pid_fill_cache(struct file *filp, void *dirent, filldir_t filldi
 int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 {
 	unsigned int nr = filp->f_pos - FIRST_PROCESS_ENTRY;
-	struct task_struct *reaper = get_proc_task(filp->f_path.dentry->d_inode);
+	struct task_struct *reaper = get_proc_task_real(filp->f_path.dentry->d_inode);
 	struct task_struct *task;
 	int tgid;
 
@@ -2226,6 +2254,8 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 	     put_task_struct(task), task = next_tgid(tgid + 1)) {
 		tgid = task->pid;
 		filp->f_pos = tgid + TGID_OFFSET;
+		if (!vx_proc_task_visible(task))
+			continue;
 		if (proc_pid_fill_cache(filp, dirent, filldir, task, tgid) < 0) {
 			put_task_struct(task);
 			goto out;
@@ -2352,9 +2382,11 @@ static struct dentry *proc_task_lookup(struct inode *dir, struct dentry * dentry
 	tid = name_to_int(dentry);
 	if (tid == ~0U)
 		goto out;
+	if (vx_current_initpid(tid))
+		goto out;
 
 	rcu_read_lock();
-	task = find_task_by_pid(tid);
+	task = vx_find_proc_task_by_pid(tid);
 	if (task)
 		get_task_struct(task);
 	rcu_read_unlock();
@@ -2499,7 +2531,7 @@ static int proc_task_readdir(struct file * filp, void * dirent, filldir_t filldi
 	for (task = first_tid(leader, tid, pos - 2);
 	     task;
 	     task = next_tid(task), pos++) {
-		tid = task->pid;
+		tid = vx_map_pid(task->pid);
 		if (proc_task_fill_cache(filp, dirent, filldir, task, tid) < 0) {
 			/* returning this tgid failed, save it as the first
 			 * pid for the next readir call */

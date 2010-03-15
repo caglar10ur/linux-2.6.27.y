@@ -219,14 +219,7 @@ int udp_get_port(struct sock *sk, unsigned short snum,
 	return  __udp_lib_get_port(sk, snum, udp_hash, &udp_port_rover, scmp);
 }
 
-int ipv4_rcv_saddr_equal(const struct sock *sk1, const struct sock *sk2)
-{
-	struct inet_sock *inet1 = inet_sk(sk1), *inet2 = inet_sk(sk2);
-
-	return 	( !ipv6_only_sock(sk2)  &&
-		  (!inet1->rcv_saddr || !inet2->rcv_saddr ||
-		   inet1->rcv_saddr == inet2->rcv_saddr      ));
-}
+extern int ipv4_rcv_saddr_equal(const struct sock *sk1, const struct sock *sk2);
 
 static inline int udp_v4_get_port(struct sock *sk, unsigned short snum)
 {
@@ -246,15 +239,22 @@ static struct sock *__udp4_lib_lookup(__be32 saddr, __be16 sport,
 	int badness = -1;
 
 	read_lock(&udp_hash_lock);
+
 	sk_for_each(sk, node, &udptable[hnum & (UDP_HTABLE_SIZE - 1)]) {
 		struct inet_sock *inet = inet_sk(sk);
 
 		if (sk->sk_hash == hnum && !ipv6_only_sock(sk)) {
 			int score = (sk->sk_family == PF_INET ? 1 : 0);
+
 			if (inet->rcv_saddr) {
 				if (inet->rcv_saddr != daddr)
 					continue;
 				score+=2;
+			} else {
+				/* block non nx_info ips */
+				if (!v4_addr_in_nx_info(sk->sk_nx_info,
+					daddr, NXA_MASK_BIND))
+					continue;
 			}
 			if (inet->daddr) {
 				if (inet->daddr != saddr)
@@ -280,6 +280,7 @@ static struct sock *__udp4_lib_lookup(__be32 saddr, __be16 sport,
 			}
 		}
 	}
+
 	if (result)
 		sock_hold(result);
 	read_unlock(&udp_hash_lock);
@@ -301,7 +302,7 @@ static inline struct sock *udp_v4_mcast_next(struct sock *sk,
 		if (s->sk_hash != hnum					||
 		    (inet->daddr && inet->daddr != rmt_addr)		||
 		    (inet->dport != rmt_port && inet->dport)		||
-		    (inet->rcv_saddr && inet->rcv_saddr != loc_addr)	||
+		    !v4_sock_addr_match(sk->sk_nx_info, inet, loc_addr)	||
 		    ipv6_only_sock(s)					||
 		    (s->sk_bound_dev_if && s->sk_bound_dev_if != dif))
 			continue;
@@ -631,7 +632,14 @@ int udp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
 				    .uli_u = { .ports =
 					       { .sport = inet->sport,
 						 .dport = dport } } };
+		struct nx_info *nxi = sk->sk_nx_info;
+
 		security_sk_classify_flow(sk, &fl);
+
+		err = ip_v4_find_src(nxi, &rt, &fl);
+		if (err)
+			goto out;
+
 		err = ip_route_output_flow(&rt, &fl, sk, 1);
 		if (err) {
 			if (err == -ENETUNREACH)
@@ -871,7 +879,8 @@ try_again:
 	{
 		sin->sin_family = AF_INET;
 		sin->sin_port = udp_hdr(skb)->source;
-		sin->sin_addr.s_addr = ip_hdr(skb)->saddr;
+		sin->sin_addr.s_addr = nx_map_sock_lback(
+			skb->sk->sk_nx_info, ip_hdr(skb)->saddr);
 		memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
 	}
 	if (inet->cmsg_flags)
@@ -1551,7 +1560,8 @@ static struct sock *udp_get_first(struct seq_file *seq)
 	for (state->bucket = 0; state->bucket < UDP_HTABLE_SIZE; ++state->bucket) {
 		struct hlist_node *node;
 		sk_for_each(sk, node, state->hashtable + state->bucket) {
-			if (sk->sk_family == state->family)
+			if (sk->sk_family == state->family &&
+				nx_check(sk->sk_nid, VS_WATCH_P | VS_IDENT))
 				goto found;
 		}
 	}
@@ -1568,7 +1578,8 @@ static struct sock *udp_get_next(struct seq_file *seq, struct sock *sk)
 		sk = sk_next(sk);
 try_again:
 		;
-	} while (sk && sk->sk_family != state->family);
+	} while (sk && (sk->sk_family != state->family ||
+		!nx_check(sk->sk_nid, VS_WATCH_P | VS_IDENT)));
 
 	if (!sk && ++state->bucket < UDP_HTABLE_SIZE) {
 		sk = sk_head(state->hashtable + state->bucket);
@@ -1681,7 +1692,10 @@ static void udp4_format_sock(struct sock *sp, char *tmpbuf, int bucket)
 
 	sprintf(tmpbuf, "%4d: %08X:%04X %08X:%04X"
 		" %02X %08X:%08X %02X:%08lX %08X %5d %8d %lu %d %p",
-		bucket, src, srcp, dest, destp, sp->sk_state,
+		bucket,
+		nx_map_sock_lback(current_nx_info(), src), srcp,
+		nx_map_sock_lback(current_nx_info(), dest), destp,
+		sp->sk_state,
 		atomic_read(&sp->sk_wmem_alloc),
 		atomic_read(&sp->sk_rmem_alloc),
 		0, 0L, 0, sock_i_uid(sp), 0, sock_i_ino(sp),

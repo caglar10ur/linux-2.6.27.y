@@ -15,6 +15,7 @@
 #include <linux/rmap.h>
 #include <linux/module.h>
 #include <linux/syscalls.h>
+#include <linux/vs_memory.h>
 
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
@@ -73,6 +74,8 @@ int install_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		goto unlock;
 	err = -ENOMEM;
 	if (page_mapcount(page) > INT_MAX/2)
+		goto unlock;
+	if (!vx_rss_avail(mm, 1))
 		goto unlock;
 
 	if (pte_none(*pte) || !zap_pte(mm, vma, addr, pte))

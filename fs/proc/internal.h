@@ -10,6 +10,7 @@
  */
 
 #include <linux/proc_fs.h>
+#include <linux/vs_pid.h>
 
 #ifdef CONFIG_PROC_SYSCTL
 extern int proc_sys_init(void);
@@ -64,9 +65,14 @@ static inline struct pid *proc_pid(struct inode *inode)
 	return PROC_I(inode)->pid;
 }
 
-static inline struct task_struct *get_proc_task(struct inode *inode)
+static inline struct task_struct *get_proc_task_real(struct inode *inode)
 {
 	return get_pid_task(proc_pid(inode), PIDTYPE_PID);
+}
+
+static inline struct task_struct *get_proc_task(struct inode *inode)
+{
+	return vx_get_proc_task(inode, proc_pid(inode));
 }
 
 static inline int proc_fd(struct inode *inode)

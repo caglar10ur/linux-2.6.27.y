@@ -25,6 +25,7 @@
 #include <linux/capability.h>
 #include <linux/syscalls.h>
 #include <linux/security.h>
+#include <linux/vs_base.h>
 
 static int set_task_ioprio(struct task_struct *task, int ioprio)
 {
@@ -103,6 +104,8 @@ asmlinkage long sys_ioprio_set(int which, int who, int ioprio)
 			else
 				pgrp = find_pid(who);
 			do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+				if (!vx_check(p->xid, VS_ADMIN_P | VS_IDENT))
+					continue;
 				ret = set_task_ioprio(p, ioprio);
 				if (ret)
 					break;
@@ -112,7 +115,7 @@ asmlinkage long sys_ioprio_set(int which, int who, int ioprio)
 			if (!who)
 				user = current->user;
 			else
-				user = find_user(who);
+				user = find_user(vx_current_xid(), who);
 
 			if (!user)
 				break;
@@ -190,6 +193,8 @@ asmlinkage long sys_ioprio_get(int which, int who)
 			else
 				pgrp = find_pid(who);
 			do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+				if (!vx_check(p->xid, VS_ADMIN_P | VS_IDENT))
+					continue;
 				tmpio = get_task_ioprio(p);
 				if (tmpio < 0)
 					continue;
@@ -203,7 +208,7 @@ asmlinkage long sys_ioprio_get(int which, int who)
 			if (!who)
 				user = current->user;
 			else
-				user = find_user(who);
+				user = find_user(vx_current_xid(), who);
 
 			if (!user)
 				break;

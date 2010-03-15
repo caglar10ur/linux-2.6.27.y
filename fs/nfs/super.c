@@ -45,6 +45,7 @@
 #include <linux/inet.h>
 #include <linux/nfs_xdr.h>
 #include <linux/magic.h>
+#include <linux/vs_tag.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -291,6 +292,7 @@ static void nfs_show_mount_options(struct seq_file *m, struct nfs_server *nfss, 
 		{ NFS_MOUNT_NONLM, ",nolock", "" },
 		{ NFS_MOUNT_NOACL, ",noacl", "" },
 		{ NFS_MOUNT_NORDIRPLUS, ",nordirplus", "" },
+		{ NFS_MOUNT_TAGGED, ",tag", "" },
 		{ 0, NULL, NULL }
 	};
 	const struct proc_nfs_info *nfs_infop;

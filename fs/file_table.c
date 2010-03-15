@@ -20,6 +20,8 @@
 #include <linux/fsnotify.h>
 #include <linux/sysctl.h>
 #include <linux/percpu_counter.h>
+#include <linux/vs_limit.h>
+#include <linux/vs_context.h>
 
 #include <asm/atomic.h>
 
@@ -119,6 +121,8 @@ struct file *get_empty_filp(void)
 	f->f_gid = tsk->fsgid;
 	eventpoll_init_file(f);
 	/* f->f_version: 0 */
+	f->f_xid = vx_current_xid();
+	vx_files_inc(f);
 	return f;
 
 over:
@@ -174,6 +178,8 @@ void fastcall __fput(struct file *file)
 	if (file->f_mode & FMODE_WRITE)
 		put_write_access(inode);
 	put_pid(file->f_owner.pid);
+	vx_files_dec(file);
+	file->f_xid = 0;
 	file_kill(file);
 	file->f_path.dentry = NULL;
 	file->f_path.mnt = NULL;
@@ -239,6 +245,8 @@ void put_filp(struct file *file)
 {
 	if (atomic_dec_and_test(&file->f_count)) {
 		security_file_free(file);
+		vx_files_dec(file);
+		file->f_xid = 0;
 		file_kill(file);
 		file_free(file);
 	}

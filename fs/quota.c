@@ -16,6 +16,7 @@
 #include <linux/buffer_head.h>
 #include <linux/capability.h>
 #include <linux/quotaops.h>
+#include <linux/vs_context.h>
 
 /* Check validity of generic quotactl commands */
 static int generic_quotactl_valid(struct super_block *sb, int type, int cmd, qid_t id)
@@ -80,11 +81,11 @@ static int generic_quotactl_valid(struct super_block *sb, int type, int cmd, qid
 	if (cmd == Q_GETQUOTA) {
 		if (((type == USRQUOTA && current->euid != id) ||
 		     (type == GRPQUOTA && !in_egroup_p(id))) &&
-		    !capable(CAP_SYS_ADMIN))
+		    !vx_capable(CAP_SYS_ADMIN, VXC_QUOTA_CTL))
 			return -EPERM;
 	}
 	else if (cmd != Q_GETFMT && cmd != Q_SYNC && cmd != Q_GETINFO)
-		if (!capable(CAP_SYS_ADMIN))
+		if (!vx_capable(CAP_SYS_ADMIN, VXC_QUOTA_CTL))
 			return -EPERM;
 
 	return 0;
@@ -131,10 +132,10 @@ static int xqm_quotactl_valid(struct super_block *sb, int type, int cmd, qid_t i
 	if (cmd == Q_XGETQUOTA) {
 		if (((type == XQM_USRQUOTA && current->euid != id) ||
 		     (type == XQM_GRPQUOTA && !in_egroup_p(id))) &&
-		     !capable(CAP_SYS_ADMIN))
+		     !vx_capable(CAP_SYS_ADMIN, VXC_QUOTA_CTL))
 			return -EPERM;
 	} else if (cmd != Q_XGETQSTAT && cmd != Q_XQUOTASYNC) {
-		if (!capable(CAP_SYS_ADMIN))
+		if (!vx_capable(CAP_SYS_ADMIN, VXC_QUOTA_CTL))
 			return -EPERM;
 	}
 
@@ -327,6 +328,46 @@ static int do_quotactl(struct super_block *sb, int type, int cmd, qid_t id, void
 	return 0;
 }
 
+#if defined(CONFIG_BLK_DEV_VROOT) || defined(CONFIG_BLK_DEV_VROOT_MODULE)
+
+#include <linux/vroot.h>
+#include <linux/major.h>
+#include <linux/module.h>
+#include <linux/kallsyms.h>
+#include <linux/vserver/debug.h>
+
+static vroot_grb_func *vroot_get_real_bdev = NULL;
+
+static spinlock_t vroot_grb_lock = SPIN_LOCK_UNLOCKED;
+
+int register_vroot_grb(vroot_grb_func *func) {
+	int ret = -EBUSY;
+
+	spin_lock(&vroot_grb_lock);
+	if (!vroot_get_real_bdev) {
+		vroot_get_real_bdev = func;
+		ret = 0;
+	}
+	spin_unlock(&vroot_grb_lock);
+	return ret;
+}
+EXPORT_SYMBOL(register_vroot_grb);
+
+int unregister_vroot_grb(vroot_grb_func *func) {
+	int ret = -EINVAL;
+
+	spin_lock(&vroot_grb_lock);
+	if (vroot_get_real_bdev) {
+		vroot_get_real_bdev = NULL;
+		ret = 0;
+	}
+	spin_unlock(&vroot_grb_lock);
+	return ret;
+}
+EXPORT_SYMBOL(unregister_vroot_grb);
+
+#endif
+
 /*
  * look up a superblock on which quota ops will be performed
  * - use the name of a block device to find the superblock thereon
@@ -344,6 +385,22 @@ static inline struct super_block *quotactl_block(const char __user *special)
 	putname(tmp);
 	if (IS_ERR(bdev))
 		return ERR_PTR(PTR_ERR(bdev));
+#if defined(CONFIG_BLK_DEV_VROOT) || defined(CONFIG_BLK_DEV_VROOT_MODULE)
+	if (bdev && bdev->bd_inode &&
+			imajor(bdev->bd_inode) == VROOT_MAJOR) {
+		struct block_device *bdnew = (void *)-EINVAL;
+
+		if (vroot_get_real_bdev)
+			bdnew = vroot_get_real_bdev(bdev);
+		else
+			vxdprintk(VXD_CBIT(misc, 0),
+					"vroot_get_real_bdev not set");
+		bdput(bdev);
+		if (IS_ERR(bdnew))
+			return ERR_PTR(PTR_ERR(bdnew));
+		bdev = bdnew;
+	}
+#endif
 	sb = get_super(bdev);
 	bdput(bdev);
 	if (!sb)

@@ -26,6 +26,7 @@
 #define CLONE_STOPPED		0x02000000	/* Start in stopped state */
 #define CLONE_NEWUTS		0x04000000	/* New utsname group? */
 #define CLONE_NEWIPC		0x08000000	/* New ipcs */
+#define CLONE_KTHREAD		0x10000000	/* clone a kernel thread */
 
 /*
  * Scheduling policies
@@ -94,7 +95,7 @@ struct bio;
  * List of flags we want to share for kernel threads,
  * if only because they are not used by them anyway.
  */
-#define CLONE_KERNEL	(CLONE_FS | CLONE_FILES | CLONE_SIGHAND)
+#define CLONE_KERNEL	(CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_KTHREAD)
 
 /*
  * These are the constant used to fake the fixed-point load-average
@@ -146,12 +147,13 @@ extern unsigned long weighted_cpuload(const int cpu);
 #define TASK_UNINTERRUPTIBLE	2
 #define TASK_STOPPED		4
 #define TASK_TRACED		8
+#define TASK_ONHOLD		16
 /* in tsk->exit_state */
-#define EXIT_ZOMBIE		16
-#define EXIT_DEAD		32
+#define EXIT_ZOMBIE		32
+#define EXIT_DEAD		64
 /* in tsk->state again */
-#define TASK_NONINTERACTIVE	64
-#define TASK_DEAD		128
+#define TASK_NONINTERACTIVE	128
+#define TASK_DEAD		256
 
 #define __set_task_state(tsk, state_value)		\
 	do { (tsk)->state = (state_value); } while (0)
@@ -287,26 +289,29 @@ extern void arch_unmap_area_topdown(struct mm_struct *, unsigned long);
  * The mm counters are not protected by its page_table_lock,
  * so must be incremented atomically.
  */
-#define set_mm_counter(mm, member, value) atomic_long_set(&(mm)->_##member, value)
-#define get_mm_counter(mm, member) ((unsigned long)atomic_long_read(&(mm)->_##member))
-#define add_mm_counter(mm, member, value) atomic_long_add(value, &(mm)->_##member)
-#define inc_mm_counter(mm, member) atomic_long_inc(&(mm)->_##member)
-#define dec_mm_counter(mm, member) atomic_long_dec(&(mm)->_##member)
 typedef atomic_long_t mm_counter_t;
+#define __set_mm_counter(mm, member, value) \
+	atomic_long_set(&(mm)->_##member, value)
+#define get_mm_counter(mm, member) \
+	((unsigned long)atomic_long_read(&(mm)->_##member))
 
 #else  /* NR_CPUS < CONFIG_SPLIT_PTLOCK_CPUS */
 /*
  * The mm counters are protected by its page_table_lock,
  * so can be incremented directly.
  */
-#define set_mm_counter(mm, member, value) (mm)->_##member = (value)
-#define get_mm_counter(mm, member) ((mm)->_##member)
-#define add_mm_counter(mm, member, value) (mm)->_##member += (value)
-#define inc_mm_counter(mm, member) (mm)->_##member++
-#define dec_mm_counter(mm, member) (mm)->_##member--
 typedef unsigned long mm_counter_t;
+#define __set_mm_counter(mm, member, value) (mm)->_##member = (value)
+#define get_mm_counter(mm, member) ((mm)->_##member)
 
 #endif /* NR_CPUS < CONFIG_SPLIT_PTLOCK_CPUS */
+
+#define set_mm_counter(mm, member, value) \
+	vx_ ## member ## pages_sub((mm), (get_mm_counter(mm, member) - value))
+#define add_mm_counter(mm, member, value) \
+	vx_ ## member ## pages_add((mm), (value))
+#define inc_mm_counter(mm, member) vx_ ## member ## pages_inc((mm))
+#define dec_mm_counter(mm, member) vx_ ## member ## pages_dec((mm))
 
 #define get_mm_rss(mm)					\
 	(get_mm_counter(mm, file_rss) + get_mm_counter(mm, anon_rss))
@@ -365,6 +370,7 @@ struct mm_struct {
 
 	/* Architecture-specific MM context */
 	mm_context_t context;
+	struct vx_info *mm_vx_info;
 
 	/* Swap token stuff */
 	/*
@@ -570,9 +576,10 @@ struct user_struct {
 	/* Hash table maintenance information */
 	struct list_head uidhash_list;
 	uid_t uid;
+	xid_t xid;
 };
 
-extern struct user_struct *find_user(uid_t);
+extern struct user_struct *find_user(xid_t, uid_t);
 
 extern struct user_struct root_user;
 #define INIT_USER (&root_user)
@@ -969,6 +976,15 @@ struct task_struct {
 	
 	void *security;
 	struct audit_context *audit_context;
+
+/* vserver context data */
+	struct vx_info *vx_info;
+	struct nx_info *nx_info;
+
+	xid_t xid;
+	nid_t nid;
+	tag_t tag;
+
 	seccomp_t seccomp;
 
 /* Thread group tracking */
@@ -1290,12 +1306,16 @@ extern struct task_struct init_task;
 
 extern struct   mm_struct init_mm;
 
-#define find_task_by_pid(nr)	find_task_by_pid_type(PIDTYPE_PID, nr)
+#define find_task_by_real_pid(nr) \
+	find_task_by_pid_type(PIDTYPE_REALPID, nr)
+#define find_task_by_pid(nr) \
+	find_task_by_pid_type(PIDTYPE_PID, nr)
+
 extern struct task_struct *find_task_by_pid_type(int type, int pid);
 extern void __set_special_pids(pid_t session, pid_t pgrp);
 
 /* per-UID process charging. */
-extern struct user_struct * alloc_uid(uid_t);
+extern struct user_struct * alloc_uid(xid_t, uid_t);
 static inline struct user_struct *get_uid(struct user_struct *u)
 {
 	atomic_inc(&u->__count);

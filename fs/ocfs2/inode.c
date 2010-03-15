@@ -28,6 +28,7 @@
 #include <linux/slab.h>
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
+#include <linux/vs_tag.h>
 
 #include <asm/byteorder.h>
 
@@ -42,6 +43,7 @@
 #include "file.h"
 #include "heartbeat.h"
 #include "inode.h"
+#include "ioctl.h"
 #include "journal.h"
 #include "namei.h"
 #include "suballoc.h"
@@ -77,6 +79,10 @@ void ocfs2_set_inode_flags(struct inode *inode)
 
 	if (flags & OCFS2_IMMUTABLE_FL)
 		inode->i_flags |= S_IMMUTABLE;
+	if (flags & OCFS2_IUNLINK_FL)
+		inode->i_flags |= S_IUNLINK;
+	if (flags & OCFS2_BARRIER_FL)
+		inode->i_flags |= S_BARRIER;
 
 	if (flags & OCFS2_SYNC_FL)
 		inode->i_flags |= S_SYNC;
@@ -105,6 +111,27 @@ void ocfs2_get_inode_flags(struct ocfs2_inode_info *oi)
 		oi->ip_attr |= OCFS2_NOATIME_FL;
 	if (flags & S_DIRSYNC)
 		oi->ip_attr |= OCFS2_DIRSYNC_FL;
+}
+
+int ocfs2_sync_flags(struct inode *inode)
+{
+	unsigned int oldflags, newflags;
+
+	oldflags = OCFS2_I(inode)->ip_flags;
+	newflags = oldflags & ~(OCFS2_IMMUTABLE_FL |
+		OCFS2_IUNLINK_FL | OCFS2_BARRIER_FL);
+
+	if (IS_IMMUTABLE(inode))
+		newflags |= OCFS2_IMMUTABLE_FL;
+	if (IS_IUNLINK(inode))
+		newflags |= OCFS2_IUNLINK_FL;
+	if (IS_BARRIER(inode))
+		newflags |= OCFS2_BARRIER_FL;
+
+	if (oldflags ^ newflags)
+		return ocfs2_set_inode_attr(inode,
+			newflags, OCFS2_FL_MASK);
+	return 0;
 }
 
 struct inode *ocfs2_iget(struct ocfs2_super *osb, u64 blkno, int flags)
@@ -212,6 +239,8 @@ int ocfs2_populate_inode(struct inode *inode, struct ocfs2_dinode *fe,
 	struct super_block *sb;
 	struct ocfs2_super *osb;
 	int status = -EINVAL;
+	uid_t uid;
+	gid_t gid;
 
 	mlog_entry("(0x%p, size:%llu)\n", inode,
 		   (unsigned long long)le64_to_cpu(fe->i_size));
@@ -246,8 +275,12 @@ int ocfs2_populate_inode(struct inode *inode, struct ocfs2_dinode *fe,
 	inode->i_generation = le32_to_cpu(fe->i_generation);
 	inode->i_rdev = huge_decode_dev(le64_to_cpu(fe->id1.dev1.i_rdev));
 	inode->i_mode = le16_to_cpu(fe->i_mode);
-	inode->i_uid = le32_to_cpu(fe->i_uid);
-	inode->i_gid = le32_to_cpu(fe->i_gid);
+	uid = le32_to_cpu(fe->i_uid);
+	gid = le32_to_cpu(fe->i_gid);
+	inode->i_uid = INOTAG_UID(DX_TAG(inode), uid, gid);
+	inode->i_gid = INOTAG_GID(DX_TAG(inode), uid, gid);
+	inode->i_tag = INOTAG_TAG(DX_TAG(inode), uid, gid,
+		/* le16_to_cpu(raw_inode->i_raw_tag)i */ 0);
 
 	/* Fast symlinks will have i_size but no allocated clusters. */
 	if (S_ISLNK(inode->i_mode) && !fe->i_clusters)
@@ -1224,8 +1257,11 @@ int ocfs2_mark_inode_dirty(handle_t *handle,
 
 	fe->i_size = cpu_to_le64(i_size_read(inode));
 	fe->i_links_count = cpu_to_le16(inode->i_nlink);
-	fe->i_uid = cpu_to_le32(inode->i_uid);
-	fe->i_gid = cpu_to_le32(inode->i_gid);
+	fe->i_uid = cpu_to_le32(TAGINO_UID(DX_TAG(inode),
+		inode->i_uid, inode->i_tag));
+	fe->i_gid = cpu_to_le32(TAGINO_GID(DX_TAG(inode),
+		inode->i_gid, inode->i_tag));
+	/* i_tag = = cpu_to_le16(inode->i_tag); */
 	fe->i_mode = cpu_to_le16(inode->i_mode);
 	fe->i_atime = cpu_to_le64(inode->i_atime.tv_sec);
 	fe->i_atime_nsec = cpu_to_le32(inode->i_atime.tv_nsec);
@@ -1253,15 +1289,24 @@ leave:
 void ocfs2_refresh_inode(struct inode *inode,
 			 struct ocfs2_dinode *fe)
 {
+	uid_t uid;
+	gid_t gid;
+
 	spin_lock(&OCFS2_I(inode)->ip_lock);
 
 	OCFS2_I(inode)->ip_clusters = le32_to_cpu(fe->i_clusters);
 	OCFS2_I(inode)->ip_attr = le32_to_cpu(fe->i_attr);
+	/* OCFS2_I(inode)->ip_flags &= ~OCFS2_FL_MASK;
+	   OCFS2_I(inode)->ip_flags |= le32_to_cpu(fe->i_flags) & OCFS2_FL_MASK; */
 	ocfs2_set_inode_flags(inode);
 	i_size_write(inode, le64_to_cpu(fe->i_size));
 	inode->i_nlink = le16_to_cpu(fe->i_links_count);
-	inode->i_uid = le32_to_cpu(fe->i_uid);
-	inode->i_gid = le32_to_cpu(fe->i_gid);
+	uid = le32_to_cpu(fe->i_uid);
+	gid = le32_to_cpu(fe->i_gid);
+	inode->i_uid = INOTAG_UID(DX_TAG(inode), uid, gid);
+	inode->i_gid = INOTAG_GID(DX_TAG(inode), uid, gid);
+	inode->i_tag = INOTAG_TAG(DX_TAG(inode), uid, gid,
+		/* le16_to_cpu(raw_inode->i_raw_tag)i */ 0);
 	inode->i_mode = le16_to_cpu(fe->i_mode);
 	if (S_ISLNK(inode->i_mode) && le32_to_cpu(fe->i_clusters) == 0)
 		inode->i_blocks = 0;

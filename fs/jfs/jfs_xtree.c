@@ -21,6 +21,7 @@
 
 #include <linux/fs.h>
 #include <linux/quotaops.h>
+#include <linux/vs_dlimit.h>
 #include "jfs_incore.h"
 #include "jfs_filsys.h"
 #include "jfs_metapage.h"
@@ -846,7 +847,12 @@ int xtInsert(tid_t tid,		/* transaction id */
 			hint = 0;
 		if ((rc = DQUOT_ALLOC_BLOCK(ip, xlen)))
 			goto out;
+		if ((rc = DLIMIT_ALLOC_BLOCK(ip, xlen))) {
+			DQUOT_FREE_BLOCK(ip, xlen);
+			goto out;
+		}
 		if ((rc = dbAlloc(ip, hint, (s64) xlen, &xaddr))) {
+			DLIMIT_FREE_BLOCK(ip, xlen);
 			DQUOT_FREE_BLOCK(ip, xlen);
 			goto out;
 		}
@@ -876,6 +882,7 @@ int xtInsert(tid_t tid,		/* transaction id */
 			/* undo data extent allocation */
 			if (*xaddrp == 0) {
 				dbFree(ip, xaddr, (s64) xlen);
+				DLIMIT_FREE_BLOCK(ip, xlen);
 				DQUOT_FREE_BLOCK(ip, xlen);
 			}
 			return rc;
@@ -1236,6 +1243,7 @@ xtSplitPage(tid_t tid, struct inode *ip,
 	struct tlock *tlck;
 	struct xtlock *sxtlck = NULL, *rxtlck = NULL;
 	int quota_allocation = 0;
+	int dlimit_allocation = 0;
 
 	smp = split->mp;
 	sp = XT_PAGE(ip, smp);
@@ -1254,6 +1262,13 @@ xtSplitPage(tid_t tid, struct inode *ip,
 	}
 
 	quota_allocation += lengthPXD(pxd);
+
+	/* Allocate blocks to dlimit. */
+	if (DLIMIT_ALLOC_BLOCK(ip, lengthPXD(pxd))) {
+	       rc = -ENOSPC;
+	       goto clean_up;
+	}
+	dlimit_allocation += lengthPXD(pxd);
 
 	/*
 	 * allocate the new right page for the split
@@ -1456,6 +1471,9 @@ xtSplitPage(tid_t tid, struct inode *ip,
 
       clean_up:
 
+	/* Rollback dlimit allocation. */
+	if (dlimit_allocation)
+		DLIMIT_FREE_BLOCK(ip, dlimit_allocation);
 	/* Rollback quota allocation. */
 	if (quota_allocation)
 		DQUOT_FREE_BLOCK(ip, quota_allocation);
@@ -1519,6 +1537,12 @@ xtSplitRoot(tid_t tid,
 	if (DQUOT_ALLOC_BLOCK(ip, lengthPXD(pxd))) {
 		release_metapage(rmp);
 		return -EDQUOT;
+	}
+	/* Allocate blocks to dlimit. */
+	if (DLIMIT_ALLOC_BLOCK(ip, lengthPXD(pxd))) {
+		DQUOT_FREE_BLOCK(ip, lengthPXD(pxd));
+		release_metapage(rmp);
+		return -ENOSPC;
 	}
 
 	jfs_info("xtSplitRoot: ip:0x%p rmp:0x%p", ip, rmp);
@@ -3951,6 +3975,8 @@ s64 xtTruncate(tid_t tid, struct inode *ip, s64 newsize, int flag)
 	else
 		ip->i_size = newsize;
 
+	/* update dlimit allocation to reflect freed blocks */
+	DLIMIT_FREE_BLOCK(ip, nfreed);
 	/* update quota allocation to reflect freed blocks */
 	DQUOT_FREE_BLOCK(ip, nfreed);
 

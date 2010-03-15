@@ -41,6 +41,8 @@
 #include <linux/pfn.h>
 #include <linux/backing-dev.h>
 #include <linux/fault-inject.h>
+#include <linux/vs_base.h>
+#include <linux/vs_limit.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -1488,6 +1490,9 @@ void si_meminfo(struct sysinfo *val)
 	val->totalhigh = totalhigh_pages;
 	val->freehigh = nr_free_highpages();
 	val->mem_unit = PAGE_SIZE;
+
+	if (vx_flags(VXF_VIRT_MEM, 0))
+		vx_vsi_meminfo(val);
 }
 
 EXPORT_SYMBOL(si_meminfo);
@@ -1508,6 +1513,9 @@ void si_meminfo_node(struct sysinfo *val, int nid)
 	val->freehigh = 0;
 #endif
 	val->mem_unit = PAGE_SIZE;
+
+	if (vx_flags(VXF_VIRT_MEM, 0))
+		vx_vsi_meminfo(val);
 }
 #endif
 

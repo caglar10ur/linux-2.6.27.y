@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
+#include <linux/vs_context.h>
 #include <asm/uaccess.h>
 
 unsigned securebits = SECUREBITS_DEFAULT; /* systemwide security settings */
@@ -103,6 +104,8 @@ static inline int cap_set_pg(int pgrp_nr, kernel_cap_t *effective,
 
 	pgrp = find_pid(pgrp_nr);
 	do_each_pid_task(pgrp, PIDTYPE_PGID, g) {
+		if (!vx_check(g->xid, VS_ADMIN_P | VS_IDENT))
+			continue;
 		target = g;
 		while_each_thread(g, target) {
 			if (!security_capset_check(target, effective,
@@ -246,8 +249,12 @@ int __capable(struct task_struct *t, int cap)
 }
 EXPORT_SYMBOL(__capable);
 
+#include <linux/vserver/base.h>
 int capable(int cap)
 {
+	/* here for now so we don't require task locking */
+	if (vs_check_bit(VXC_CAP_MASK, cap) && !vx_mcaps(1L << cap))
+		return 0;
 	return __capable(current, cap);
 }
 EXPORT_SYMBOL(capable);

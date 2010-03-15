@@ -13,6 +13,9 @@
 #include <linux/security.h>
 #include <linux/module.h>
 #include <linux/kallsyms.h>
+#include <linux/proc_fs.h>
+#include <linux/vserver/inode.h>
+#include <linux/vs_tag.h>
 
 #include <asm/uaccess.h>
 #include <asm/ioctls.h>

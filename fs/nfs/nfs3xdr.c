@@ -22,6 +22,7 @@
 #include <linux/nfs3.h>
 #include <linux/nfs_fs.h>
 #include <linux/nfsacl.h>
+#include <linux/vs_tag.h>
 #include "internal.h"
 
 #define NFSDBG_FACILITY		NFSDBG_XDR
@@ -178,7 +179,7 @@ xdr_decode_fattr(__be32 *p, struct nfs_fattr *fattr)
 }
 
 static inline __be32 *
-xdr_encode_sattr(__be32 *p, struct iattr *attr)
+xdr_encode_sattr(__be32 *p, struct iattr *attr, int tag)
 {
 	if (attr->ia_valid & ATTR_MODE) {
 		*p++ = xdr_one;
@@ -186,15 +187,17 @@ xdr_encode_sattr(__be32 *p, struct iattr *attr)
 	} else {
 		*p++ = xdr_zero;
 	}
-	if (attr->ia_valid & ATTR_UID) {
+	if (attr->ia_valid & ATTR_UID ||
+		(tag && (attr->ia_valid & ATTR_TAG))) {
 		*p++ = xdr_one;
-		*p++ = htonl(attr->ia_uid);
+		*p++ = htonl(TAGINO_UID(tag, attr->ia_uid, attr->ia_tag));
 	} else {
 		*p++ = xdr_zero;
 	}
-	if (attr->ia_valid & ATTR_GID) {
+	if (attr->ia_valid & ATTR_GID ||
+		(tag && (attr->ia_valid & ATTR_TAG))) {
 		*p++ = xdr_one;
-		*p++ = htonl(attr->ia_gid);
+		*p++ = htonl(TAGINO_GID(tag, attr->ia_gid, attr->ia_tag));
 	} else {
 		*p++ = xdr_zero;
 	}
@@ -279,7 +282,8 @@ static int
 nfs3_xdr_sattrargs(struct rpc_rqst *req, __be32 *p, struct nfs3_sattrargs *args)
 {
 	p = xdr_encode_fhandle(p, args->fh);
-	p = xdr_encode_sattr(p, args->sattr);
+	p = xdr_encode_sattr(p, args->sattr,
+		req->rq_task->tk_client->cl_tag);
 	*p++ = htonl(args->guard);
 	if (args->guard)
 		p = xdr_encode_time3(p, &args->guardtime);
@@ -370,7 +374,8 @@ nfs3_xdr_createargs(struct rpc_rqst *req, __be32 *p, struct nfs3_createargs *arg
 		*p++ = args->verifier[0];
 		*p++ = args->verifier[1];
 	} else
-		p = xdr_encode_sattr(p, args->sattr);
+		p = xdr_encode_sattr(p, args->sattr,
+			req->rq_task->tk_client->cl_tag);
 
 	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
 	return 0;
@@ -384,7 +389,8 @@ nfs3_xdr_mkdirargs(struct rpc_rqst *req, __be32 *p, struct nfs3_mkdirargs *args)
 {
 	p = xdr_encode_fhandle(p, args->fh);
 	p = xdr_encode_array(p, args->name, args->len);
-	p = xdr_encode_sattr(p, args->sattr);
+	p = xdr_encode_sattr(p, args->sattr,
+		req->rq_task->tk_client->cl_tag);
 	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
 	return 0;
 }
@@ -397,7 +403,8 @@ nfs3_xdr_symlinkargs(struct rpc_rqst *req, __be32 *p, struct nfs3_symlinkargs *a
 {
 	p = xdr_encode_fhandle(p, args->fromfh);
 	p = xdr_encode_array(p, args->fromname, args->fromlen);
-	p = xdr_encode_sattr(p, args->sattr);
+	p = xdr_encode_sattr(p, args->sattr,
+		req->rq_task->tk_client->cl_tag);
 	*p++ = htonl(args->pathlen);
 	req->rq_slen = xdr_adjust_iovec(req->rq_svec, p);
 
@@ -415,7 +422,8 @@ nfs3_xdr_mknodargs(struct rpc_rqst *req, __be32 *p, struct nfs3_mknodargs *args)
 	p = xdr_encode_fhandle(p, args->fh);
 	p = xdr_encode_array(p, args->name, args->len);
 	*p++ = htonl(args->type);
-	p = xdr_encode_sattr(p, args->sattr);
+	p = xdr_encode_sattr(p, args->sattr,
+		req->rq_task->tk_client->cl_tag);
 	if (args->type == NF3CHR || args->type == NF3BLK) {
 		*p++ = htonl(MAJOR(args->rdev));
 		*p++ = htonl(MINOR(args->rdev));

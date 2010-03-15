@@ -17,6 +17,7 @@
 #include <linux/reiserfs_acl.h>
 #include <linux/reiserfs_xattr.h>
 #include <linux/quotaops.h>
+#include <linux/vs_tag.h>
 
 #define INC_DIR_INODE_NLINK(i) if (i->i_nlink != 1) { inc_nlink(i); if (i->i_nlink >= REISERFS_LINK_MAX) i->i_nlink=1; }
 #define DEC_DIR_INODE_NLINK(i) if (i->i_nlink != 1) drop_nlink(i);
@@ -360,6 +361,7 @@ static struct dentry *reiserfs_lookup(struct inode *dir, struct dentry *dentry,
 			reiserfs_write_unlock(dir->i_sb);
 			return ERR_PTR(-EACCES);
 		}
+		dx_propagate_tag(nd, inode);
 
 		/* Propogate the priv_object flag so we know we're in the priv tree */
 		if (is_reiserfs_priv_object(dir))
@@ -595,6 +597,7 @@ static int new_inode_init(struct inode *inode, struct inode *dir, int mode)
 	} else {
 		inode->i_gid = current->fsgid;
 	}
+	inode->i_tag = dx_current_fstag(inode->i_sb);
 	DQUOT_INIT(inode);
 	return 0;
 }
@@ -1541,6 +1544,7 @@ const struct inode_operations reiserfs_dir_inode_operations = {
 	.listxattr = reiserfs_listxattr,
 	.removexattr = reiserfs_removexattr,
 	.permission = reiserfs_permission,
+	.sync_flags = reiserfs_sync_flags,
 };
 
 /*
@@ -1557,6 +1561,7 @@ const struct inode_operations reiserfs_symlink_inode_operations = {
 	.listxattr = reiserfs_listxattr,
 	.removexattr = reiserfs_removexattr,
 	.permission = reiserfs_permission,
+	.sync_flags = reiserfs_sync_flags,
 
 };
 
@@ -1570,5 +1575,6 @@ const struct inode_operations reiserfs_special_inode_operations = {
 	.listxattr = reiserfs_listxattr,
 	.removexattr = reiserfs_removexattr,
 	.permission = reiserfs_permission,
+	.sync_flags = reiserfs_sync_flags,
 
 };

@@ -28,6 +28,7 @@
 #include <linux/hash.h>
 #include <linux/pid_namespace.h>
 #include <linux/init_task.h>
+#include <linux/vs_pid.h>
 
 #define pid_hashfn(nr) hash_long((unsigned long)nr, pidhash_shift)
 static struct hlist_head *pid_hash;
@@ -295,6 +296,9 @@ void fastcall transfer_pid(struct task_struct *old, struct task_struct *new,
 struct task_struct * fastcall pid_task(struct pid *pid, enum pid_type type)
 {
 	struct task_struct *result = NULL;
+
+	if (type == PIDTYPE_REALPID)
+		type = PIDTYPE_PID;
 	if (pid) {
 		struct hlist_node *first;
 		first = rcu_dereference(pid->tasks[type].first);
@@ -309,7 +313,17 @@ struct task_struct * fastcall pid_task(struct pid *pid, enum pid_type type)
  */
 struct task_struct *find_task_by_pid_type(int type, int nr)
 {
-	return pid_task(find_pid(nr), type);
+	struct task_struct *task;
+
+	if (type == PIDTYPE_PID)
+		nr = vx_rmap_pid(nr);
+
+	task = pid_task(find_pid(nr), type);
+	if (task && (type != PIDTYPE_REALPID) &&
+		/* maybe VS_WATCH_P in the future? */
+		!vx_check(task->xid, VS_WATCH|VS_IDENT))
+		return NULL;
+	return task;
 }
 
 EXPORT_SYMBOL(find_task_by_pid_type);

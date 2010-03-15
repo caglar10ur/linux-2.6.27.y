@@ -31,6 +31,13 @@
 #include <linux/file.h>
 #include <linux/fcntl.h>
 #include <linux/namei.h>
+#include <linux/proc_fs.h>
+#include <linux/vserver/inode.h>
+#include <linux/vs_base.h>
+#include <linux/vs_tag.h>
+#include <linux/vs_cowbl.h>
+#include <linux/vs_device.h>
+#include <linux/vs_context.h>
 #include <asm/namei.h>
 #include <asm/uaccess.h>
 
@@ -224,6 +231,28 @@ int generic_permission(struct inode *inode, int mask,
 	return -EACCES;
 }
 
+static inline int dx_barrier(struct inode *inode)
+{
+	if (IS_BARRIER(inode) && !vx_check(0, VS_ADMIN)) {
+		vxwprintk_task(1, "did hit the barrier.");
+		return 1;
+	}
+	return 0;
+}
+
+static inline int dx_permission(struct inode *inode, int mask, struct nameidata *nd)
+{
+	if (dx_barrier(inode))
+		return -EACCES;
+	if (dx_notagcheck(nd) ||
+	    dx_check(inode->i_tag, DX_HOSTID|DX_ADMIN|DX_WATCH|DX_IDENT))
+		return 0;
+
+	vxwprintk_task(1, "denied access to %p[#%d,%lu] »%s«.",
+		inode, inode->i_tag, inode->i_ino, vxd_cond_path(nd));
+	return -EACCES;
+}
+
 int permission(struct inode *inode, int mask, struct nameidata *nd)
 {
 	umode_t mode = inode->i_mode;
@@ -234,14 +263,14 @@ int permission(struct inode *inode, int mask, struct nameidata *nd)
 		/*
 		 * Nobody gets write access to a read-only fs.
 		 */
-		if (IS_RDONLY(inode) &&
+		if ((IS_RDONLY(inode) || (nd && MNT_IS_RDONLY(nd->mnt))) &&
 		    (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
 			return -EROFS;
 
 		/*
 		 * Nobody gets write access to an immutable file.
 		 */
-		if (IS_IMMUTABLE(inode))
+		if (IS_IMMUTABLE(inode) && !IS_COW(inode))
 			return -EACCES;
 	}
 
@@ -257,6 +286,12 @@ int permission(struct inode *inode, int mask, struct nameidata *nd)
 
 	/* Ordinary permission routines do not understand MAY_APPEND. */
 	submask = mask & ~MAY_APPEND;
+
+	if ((inode->i_sb->s_magic != DEVPTS_SUPER_MAGIC) &&
+		(inode->i_sb->s_magic != PROC_SUPER_MAGIC) &&
+		(retval = dx_permission(inode, mask, nd)))
+		return retval;
+
 	if (inode->i_op && inode->i_op->permission)
 		retval = inode->i_op->permission(inode, submask, nd);
 	else
@@ -432,6 +467,8 @@ static int exec_permission_lite(struct inode *inode,
 {
 	umode_t	mode = inode->i_mode;
 
+	if (dx_barrier(inode))
+		return -EACCES;
 	if (inode->i_op && inode->i_op->permission)
 		return -EAGAIN;
 
@@ -732,7 +769,8 @@ static __always_inline void follow_dotdot(struct nameidata *nd)
 		if (nd->dentry == fs->root &&
 		    nd->mnt == fs->rootmnt) {
                         read_unlock(&fs->lock);
-			break;
+			/* for sane '/' avoid follow_mount() */
+			return;
 		}
                 read_unlock(&fs->lock);
 		spin_lock(&dcache_lock);
@@ -769,16 +807,39 @@ static int do_lookup(struct nameidata *nd, struct qstr *name,
 {
 	struct vfsmount *mnt = nd->mnt;
 	struct dentry *dentry = __d_lookup(nd->dentry, name);
+	struct inode *inode;
 
 	if (!dentry)
 		goto need_lookup;
 	if (dentry->d_op && dentry->d_op->d_revalidate)
 		goto need_revalidate;
+	inode = dentry->d_inode;
+	if (!inode)
+		goto done;
+
+	if (inode->i_sb->s_magic == PROC_SUPER_MAGIC) {
+		struct proc_dir_entry *de = PDE(inode);
+
+		if (de && !vx_hide_check(0, de->vx_flags))
+			goto hidden;
+	} else if (inode->i_sb->s_magic == DEVPTS_SUPER_MAGIC) {
+		if (!vx_check((xid_t)inode->i_tag, VS_WATCH_P | VS_IDENT))
+			goto hidden;
+	} else {
+		if (!dx_notagcheck(nd) && !dx_check(inode->i_tag,
+			DX_WATCH | DX_ADMIN | DX_HOSTID | DX_IDENT))
+			goto hidden;
+	}
 done:
 	path->mnt = mnt;
 	path->dentry = dentry;
 	__follow_mount(path);
 	return 0;
+hidden:
+	vxwprintk_task(1, "did lookup hidden %p[#%d,%lu] »%s«.",
+		inode, inode->i_tag, inode->i_ino, vxd_path(dentry, mnt));
+	dput(dentry);
+	return -ENOENT;
 
 need_lookup:
 	dentry = real_lookup(nd->dentry, name, nd);
@@ -1399,7 +1460,8 @@ static inline int check_sticky(struct inode *dir, struct inode *inode)
  * 10. We don't allow removal of NFS sillyrenamed files; it's handled by
  *     nfs_async_unlink().
  */
-static int may_delete(struct inode *dir,struct dentry *victim,int isdir)
+static int may_delete(struct inode *dir, struct dentry *victim,
+	int isdir, struct nameidata *nd)
 {
 	int error;
 
@@ -1409,13 +1471,13 @@ static int may_delete(struct inode *dir,struct dentry *victim,int isdir)
 	BUG_ON(victim->d_parent->d_inode != dir);
 	audit_inode_child(victim->d_name.name, victim->d_inode, dir);
 
-	error = permission(dir,MAY_WRITE | MAY_EXEC, NULL);
+	error = permission(dir,MAY_WRITE | MAY_EXEC, nd);
 	if (error)
 		return error;
 	if (IS_APPEND(dir))
 		return -EPERM;
 	if (check_sticky(dir, victim->d_inode)||IS_APPEND(victim->d_inode)||
-	    IS_IMMUTABLE(victim->d_inode))
+		IS_IXORUNLINK(victim->d_inode))
 		return -EPERM;
 	if (isdir) {
 		if (!S_ISDIR(victim->d_inode->i_mode))
@@ -1546,6 +1608,14 @@ int may_open(struct nameidata *nd, int acc_mode, int flag)
 	if (S_ISDIR(inode->i_mode) && (acc_mode & MAY_WRITE))
 		return -EISDIR;
 
+#ifdef	CONFIG_VSERVER_COWBL
+	if (IS_COW(inode) && (acc_mode & MAY_WRITE)) {
+		if (IS_COW_LINK(inode))
+			return -EMLINK;
+		inode->i_flags &= ~(S_IUNLINK|S_IMMUTABLE);
+		mark_inode_dirty(inode);
+	}
+#endif
 	error = vfs_permission(nd, acc_mode);
 	if (error)
 		return error;
@@ -1562,7 +1632,8 @@ int may_open(struct nameidata *nd, int acc_mode, int flag)
 			return -EACCES;
 
 		flag &= ~O_TRUNC;
-	} else if (IS_RDONLY(inode) && (acc_mode & MAY_WRITE))
+	} else if ((IS_RDONLY(inode) || MNT_IS_RDONLY(nd->mnt))
+		&& (acc_mode & MAY_WRITE))
 		return -EROFS;
 	/*
 	 * An append-only file must be opened in append mode for writing.
@@ -1650,6 +1721,11 @@ int open_namei(int dfd, const char *pathname, int flag,
 	struct dentry *dir;
 	int count = 0;
 
+#ifdef	CONFIG_VSERVER_COWBL
+	int rflag = flag;
+	int rmode = mode;
+restart:
+#endif
 	acc_mode = ACC_MODE(flag);
 
 	/* O_TRUNC implies we need access checks for write permissions */
@@ -1743,6 +1819,22 @@ do_last:
 		goto exit;
 ok:
 	error = may_open(nd, acc_mode, flag);
+#ifdef	CONFIG_VSERVER_COWBL
+	if (error == -EMLINK) {
+		struct dentry *dentry;
+		dentry = cow_break_link(pathname);
+		if (IS_ERR(dentry)) {
+			error = PTR_ERR(dentry);
+			goto exit;
+		}
+		dput(dentry);
+		release_open_intent(nd);
+		path_release(nd);
+		flag = rflag;
+		mode = rmode;
+		goto restart;
+	}
+#endif
 	if (error)
 		goto exit;
 	return 0;
@@ -1854,16 +1946,25 @@ fail:
 }
 EXPORT_SYMBOL_GPL(lookup_create);
 
-int vfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
+int vfs_mknod(struct inode *dir, struct dentry *dentry,
+	int mode, dev_t dev, struct nameidata *nd)
 {
-	int error = may_create(dir, dentry, NULL);
+	int error = may_create(dir, dentry, nd);
 
 	if (error)
 		return error;
 
-	if ((S_ISCHR(mode) || S_ISBLK(mode)) && !capable(CAP_MKNOD))
+	if (!(S_ISCHR(mode) || S_ISBLK(mode)))
+		goto okay;
+
+	if (!capable(CAP_MKNOD))
 		return -EPERM;
 
+	if (S_ISCHR(mode) && !vs_chrdev_perm(dev, DATTR_CREATE))
+		return -EPERM;
+	if (S_ISBLK(mode) && !vs_blkdev_perm(dev, DATTR_CREATE))
+		return -EPERM;
+okay:
 	if (!dir->i_op || !dir->i_op->mknod)
 		return -EPERM;
 
@@ -1906,11 +2007,12 @@ asmlinkage long sys_mknodat(int dfd, const char __user *filename, int mode,
 			error = vfs_create(nd.dentry->d_inode,dentry,mode,&nd);
 			break;
 		case S_IFCHR: case S_IFBLK:
-			error = vfs_mknod(nd.dentry->d_inode,dentry,mode,
-					new_decode_dev(dev));
+			error = vfs_mknod(nd.dentry->d_inode, dentry, mode,
+					new_decode_dev(dev), &nd);
 			break;
 		case S_IFIFO: case S_IFSOCK:
-			error = vfs_mknod(nd.dentry->d_inode,dentry,mode,0);
+			error = vfs_mknod(nd.dentry->d_inode, dentry, mode,
+					0, &nd);
 			break;
 		case S_IFDIR:
 			error = -EPERM;
@@ -1933,9 +2035,10 @@ asmlinkage long sys_mknod(const char __user *filename, int mode, unsigned dev)
 	return sys_mknodat(AT_FDCWD, filename, mode, dev);
 }
 
-int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+int vfs_mkdir(struct inode *dir, struct dentry *dentry,
+	int mode, struct nameidata *nd)
 {
-	int error = may_create(dir, dentry, NULL);
+	int error = may_create(dir, dentry, nd);
 
 	if (error)
 		return error;
@@ -1977,7 +2080,7 @@ asmlinkage long sys_mkdirat(int dfd, const char __user *pathname, int mode)
 
 	if (!IS_POSIXACL(nd.dentry->d_inode))
 		mode &= ~current->fs->umask;
-	error = vfs_mkdir(nd.dentry->d_inode, dentry, mode);
+	error = vfs_mkdir(nd.dentry->d_inode, dentry, mode, &nd);
 	dput(dentry);
 out_unlock:
 	mutex_unlock(&nd.dentry->d_inode->i_mutex);
@@ -2020,9 +2123,10 @@ void dentry_unhash(struct dentry *dentry)
 	spin_unlock(&dcache_lock);
 }
 
-int vfs_rmdir(struct inode *dir, struct dentry *dentry)
+int vfs_rmdir(struct inode *dir, struct dentry *dentry,
+	struct nameidata *nd)
 {
-	int error = may_delete(dir, dentry, 1);
+	int error = may_delete(dir, dentry, 1, nd);
 
 	if (error)
 		return error;
@@ -2084,7 +2188,7 @@ static long do_rmdir(int dfd, const char __user *pathname)
 	error = PTR_ERR(dentry);
 	if (IS_ERR(dentry))
 		goto exit2;
-	error = vfs_rmdir(nd.dentry->d_inode, dentry);
+	error = vfs_rmdir(nd.dentry->d_inode, dentry, &nd);
 	dput(dentry);
 exit2:
 	mutex_unlock(&nd.dentry->d_inode->i_mutex);
@@ -2100,9 +2204,10 @@ asmlinkage long sys_rmdir(const char __user *pathname)
 	return do_rmdir(AT_FDCWD, pathname);
 }
 
-int vfs_unlink(struct inode *dir, struct dentry *dentry)
+int vfs_unlink(struct inode *dir, struct dentry *dentry,
+	struct nameidata *nd)
 {
-	int error = may_delete(dir, dentry, 0);
+	int error = may_delete(dir, dentry, 0, nd);
 
 	if (error)
 		return error;
@@ -2164,7 +2269,7 @@ static long do_unlinkat(int dfd, const char __user *pathname)
 		inode = dentry->d_inode;
 		if (inode)
 			atomic_inc(&inode->i_count);
-		error = vfs_unlink(nd.dentry->d_inode, dentry);
+		error = vfs_unlink(nd.dentry->d_inode, dentry, &nd);
 	exit2:
 		dput(dentry);
 	}
@@ -2199,9 +2304,10 @@ asmlinkage long sys_unlink(const char __user *pathname)
 	return do_unlinkat(AT_FDCWD, pathname);
 }
 
-int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname, int mode)
+int vfs_symlink(struct inode *dir, struct dentry *dentry,
+	const char *oldname, int mode, struct nameidata *nd)
 {
-	int error = may_create(dir, dentry, NULL);
+	int error = may_create(dir, dentry, nd);
 
 	if (error)
 		return error;
@@ -2245,7 +2351,7 @@ asmlinkage long sys_symlinkat(const char __user *oldname,
 	if (IS_ERR(dentry))
 		goto out_unlock;
 
-	error = vfs_symlink(nd.dentry->d_inode, dentry, from, S_IALLUGO);
+	error = vfs_symlink(nd.dentry->d_inode, dentry, from, S_IALLUGO, &nd);
 	dput(dentry);
 out_unlock:
 	mutex_unlock(&nd.dentry->d_inode->i_mutex);
@@ -2262,7 +2368,8 @@ asmlinkage long sys_symlink(const char __user *oldname, const char __user *newna
 	return sys_symlinkat(oldname, AT_FDCWD, newname);
 }
 
-int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_dentry)
+int vfs_link(struct dentry *old_dentry, struct inode *dir,
+	struct dentry *new_dentry, struct nameidata *nd)
 {
 	struct inode *inode = old_dentry->d_inode;
 	int error;
@@ -2270,7 +2377,7 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
 	if (!inode)
 		return -ENOENT;
 
-	error = may_create(dir, new_dentry, NULL);
+	error = may_create(dir, new_dentry, nd);
 	if (error)
 		return error;
 
@@ -2280,7 +2387,7 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
 	/*
 	 * A link to an append-only or immutable file cannot be created.
 	 */
-	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
+	if (IS_APPEND(inode) || IS_IXORUNLINK(inode))
 		return -EPERM;
 	if (!dir->i_op || !dir->i_op->link)
 		return -EPERM;
@@ -2340,7 +2447,7 @@ asmlinkage long sys_linkat(int olddfd, const char __user *oldname,
 	error = PTR_ERR(new_dentry);
 	if (IS_ERR(new_dentry))
 		goto out_unlock;
-	error = vfs_link(old_nd.dentry, nd.dentry->d_inode, new_dentry);
+	error = vfs_link(old_nd.dentry, nd.dentry->d_inode, new_dentry, &nd);
 	dput(new_dentry);
 out_unlock:
 	mutex_unlock(&nd.dentry->d_inode->i_mutex);
@@ -2472,14 +2579,14 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (old_dentry->d_inode == new_dentry->d_inode)
  		return 0;
  
-	error = may_delete(old_dir, old_dentry, is_dir);
+	error = may_delete(old_dir, old_dentry, is_dir, NULL);
 	if (error)
 		return error;
 
 	if (!new_dentry->d_inode)
 		error = may_create(new_dir, new_dentry, NULL);
 	else
-		error = may_delete(new_dir, new_dentry, is_dir);
+		error = may_delete(new_dir, new_dentry, is_dir, NULL);
 	if (error)
 		return error;
 
@@ -2556,6 +2663,9 @@ static int do_rename(int olddfd, const char *oldname,
 	/* source should not be ancestor of target */
 	error = -EINVAL;
 	if (old_dentry == trap)
+		goto exit4;
+	error = -EROFS;
+	if (MNT_IS_RDONLY(newnd.mnt))
 		goto exit4;
 	new_dentry = lookup_hash(&newnd);
 	error = PTR_ERR(new_dentry);
@@ -2649,6 +2759,216 @@ int vfs_follow_link(struct nameidata *nd, const char *link)
 {
 	return __vfs_follow_link(nd, link);
 }
+
+
+#ifdef	CONFIG_VSERVER_COWBL
+
+#include <linux/file.h>
+
+static inline
+long do_cow_splice(struct file *in, struct file *out, size_t len)
+{
+	loff_t ppos = 0;
+
+	return do_splice_direct(in, &ppos, out, len, 0);
+}
+
+struct dentry *cow_break_link(const char *pathname)
+{
+	int ret, mode, pathlen, redo = 0;
+	struct nameidata old_nd, dir_nd;
+	struct dentry *old_dentry, *new_dentry;
+	struct dentry *dir, *res = NULL;
+	struct vfsmount *old_mnt, *new_mnt;
+	struct file *old_file;
+	struct file *new_file;
+	char *to, *path, pad='\251';
+	loff_t size;
+
+	vxdprintk(VXD_CBIT(misc, 1), "cow_break_link(»%s«)", pathname);
+	path = kmalloc(PATH_MAX, GFP_KERNEL);
+	ret = -ENOMEM;
+	if (!path)
+		goto out;
+
+	/* old_nd will have refs to dentry and mnt */
+	ret = path_lookup(pathname, LOOKUP_FOLLOW, &old_nd);
+	vxdprintk(VXD_CBIT(misc, 2), "path_lookup(old): %d", ret);
+	if (ret < 0)
+		goto out_free_path;
+
+	old_dentry = old_nd.dentry;
+	old_mnt = old_nd.mnt;
+	mode = old_dentry->d_inode->i_mode;
+
+	to = d_path(old_dentry, old_mnt, path, PATH_MAX-2);
+	pathlen = strlen(to);
+	vxdprintk(VXD_CBIT(misc, 2), "old path »%s« [»%.*s«:%d]", to,
+		old_dentry->d_name.len, old_dentry->d_name.name,
+		old_dentry->d_name.len);
+
+	to[pathlen + 1] = 0;
+retry:
+	to[pathlen] = pad--;
+	ret = -EMLINK;
+	if (pad <= '\240')
+		goto out_rel_old;
+
+	vxdprintk(VXD_CBIT(misc, 1), "temp copy »%s«", to);
+	/* dir_nd will have refs to dentry and mnt */
+	ret = path_lookup(to,
+		LOOKUP_PARENT | LOOKUP_OPEN | LOOKUP_CREATE, &dir_nd);
+	vxdprintk(VXD_CBIT(misc, 2),
+		"path_lookup(new): %d", ret);
+	if (ret < 0)
+		goto retry;
+
+	/* this puppy downs the inode mutex */
+	new_dentry = lookup_create(&dir_nd, 0);
+	vxdprintk(VXD_CBIT(misc, 2),
+		"lookup_create(new): %p [»%.*s«:%d]", new_dentry,
+		new_dentry->d_name.len, new_dentry->d_name.name,
+		new_dentry->d_name.len);
+	if (!new_dentry || IS_ERR(new_dentry)) {
+		path_release(&dir_nd);
+		goto retry;
+	}
+	dir = dir_nd.dentry;
+
+	ret = vfs_create(dir_nd.dentry->d_inode, new_dentry, mode, &dir_nd);
+	vxdprintk(VXD_CBIT(misc, 2),
+		"vfs_create(new): %d", ret);
+	if (ret == -EEXIST) {
+		mutex_unlock(&dir->d_inode->i_mutex);
+		dput(new_dentry);
+		path_release(&dir_nd);
+		goto retry;
+	}
+	else if (ret < 0)
+		goto out_unlock_new;
+
+	/* drop out early, ret passes ENOENT */
+	ret = -ENOENT;
+	if ((redo = d_unhashed(old_dentry)))
+		goto out_unlock_new;
+
+	new_mnt = dir_nd.mnt;
+	dget(old_dentry);
+	mntget(old_mnt);
+	/* this one cleans up the dentry/mnt in case of failure */
+	old_file = dentry_open(old_dentry, old_mnt, O_RDONLY);
+	vxdprintk(VXD_CBIT(misc, 2),
+		"dentry_open(old): %p", old_file);
+	if (!old_file || IS_ERR(old_file)) {
+		res = IS_ERR(old_file) ? (void *) old_file : res;
+		goto out_unlock_new;
+	}
+
+	dget(new_dentry);
+	mntget(new_mnt);
+	/* this one cleans up the dentry/mnt in case of failure */
+	new_file = dentry_open(new_dentry, new_mnt, O_WRONLY);
+	vxdprintk(VXD_CBIT(misc, 2),
+		"dentry_open(new): %p", new_file);
+
+	ret = IS_ERR(new_file) ? PTR_ERR(new_file) : -ENOENT;
+	if (!new_file || IS_ERR(new_file))
+		goto out_fput_old;
+
+	size = i_size_read(old_file->f_dentry->d_inode);
+	ret = do_cow_splice(old_file, new_file, size);
+	vxdprintk(VXD_CBIT(misc, 2), "do_splice_direct: %d", ret);
+	if (ret < 0) {
+		goto out_fput_both;
+	} else if (ret < size) {
+		ret = -ENOSPC;
+		goto out_fput_both;
+	} else {
+		struct inode *old_inode = old_dentry->d_inode;
+		struct inode *new_inode = new_dentry->d_inode;
+		struct iattr attr = {
+			.ia_uid = old_inode->i_uid,
+			.ia_gid = old_inode->i_gid,
+			.ia_valid = ATTR_UID | ATTR_GID
+			};
+
+		ret = inode_setattr(new_inode, &attr);
+		if (ret)
+			goto out_fput_both;
+	}
+
+	mutex_lock(&old_dentry->d_inode->i_sb->s_vfs_rename_mutex);
+
+	/* drop out late */
+	ret = -ENOENT;
+	if ((redo = d_unhashed(old_dentry)))
+		goto out_unlock;
+
+	vxdprintk(VXD_CBIT(misc, 2),
+		"vfs_rename: [»%*s«:%d] -> [»%*s«:%d]",
+		new_dentry->d_name.len, new_dentry->d_name.name,
+		new_dentry->d_name.len,
+		old_dentry->d_name.len, old_dentry->d_name.name,
+		old_dentry->d_name.len);
+	ret = vfs_rename(dir_nd.dentry->d_inode, new_dentry,
+		old_nd.dentry->d_parent->d_inode, old_dentry);
+	vxdprintk(VXD_CBIT(misc, 2), "vfs_rename: %d", ret);
+	res = new_dentry;
+
+out_unlock:
+	mutex_unlock(&old_dentry->d_inode->i_sb->s_vfs_rename_mutex);
+
+out_fput_both:
+	vxdprintk(VXD_CBIT(misc, 3),
+		"fput(new_file=%p[#%d])", new_file,
+		atomic_read(&new_file->f_count));
+	fput(new_file);
+
+out_fput_old:
+	vxdprintk(VXD_CBIT(misc, 3),
+		"fput(old_file=%p[#%d])", old_file,
+		atomic_read(&old_file->f_count));
+	fput(old_file);
+
+out_unlock_new:
+	mutex_unlock(&dir->d_inode->i_mutex);
+	if (!ret)
+		goto out_redo;
+
+	/* error path cleanup */
+	vfs_unlink(dir->d_inode, new_dentry, &dir_nd);
+	dput(new_dentry);
+
+out_redo:
+	if (!redo)
+		goto out_rel_both;
+	/* lookup dentry once again */
+	path_release(&old_nd);
+	ret = path_lookup(pathname, LOOKUP_FOLLOW, &old_nd);
+	if (ret)
+		goto out_rel_both;
+
+	new_dentry = old_nd.dentry;
+	vxdprintk(VXD_CBIT(misc, 2),
+		"path_lookup(redo): %p [»%.*s«:%d]", new_dentry,
+		new_dentry->d_name.len, new_dentry->d_name.name,
+		new_dentry->d_name.len);
+	dget(new_dentry);
+	res = new_dentry;
+
+out_rel_both:
+	path_release(&dir_nd);
+out_rel_old:
+	path_release(&old_nd);
+out_free_path:
+	kfree(path);
+out:
+	if (ret)
+		res = ERR_PTR(ret);
+	return res;
+}
+
+#endif
 
 /* get the link contents into pagecache */
 static char *page_getlink(struct dentry * dentry, struct page **ppage)

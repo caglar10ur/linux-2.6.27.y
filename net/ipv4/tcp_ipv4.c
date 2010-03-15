@@ -1974,6 +1974,12 @@ static void *listening_get_next(struct seq_file *seq, void *cur)
 		req = req->dl_next;
 		while (1) {
 			while (req) {
+				vxdprintk(VXD_CBIT(net, 6),
+					"sk,req: %p [#%d] (from %d)", req->sk,
+					(req->sk)?req->sk->sk_nid:0, nx_current_nid());
+				if (req->sk &&
+					!nx_check(req->sk->sk_nid, VS_WATCH_P | VS_IDENT))
+					continue;
 				if (req->rsk_ops->family == st->family) {
 					cur = req;
 					goto out;
@@ -1998,6 +2004,10 @@ get_req:
 	}
 get_sk:
 	sk_for_each_from(sk, node) {
+		vxdprintk(VXD_CBIT(net, 6), "sk: %p [#%d] (from %d)",
+			sk, sk->sk_nid, nx_current_nid());
+		if (!nx_check(sk->sk_nid, VS_WATCH_P | VS_IDENT))
+			continue;
 		if (sk->sk_family == st->family) {
 			cur = sk;
 			goto out;
@@ -2049,18 +2059,26 @@ static void *established_get_first(struct seq_file *seq)
 
 		read_lock(&tcp_hashinfo.ehash[st->bucket].lock);
 		sk_for_each(sk, node, &tcp_hashinfo.ehash[st->bucket].chain) {
-			if (sk->sk_family != st->family) {
+			vxdprintk(VXD_CBIT(net, 6),
+				"sk,egf: %p [#%d] (from %d)",
+				sk, sk->sk_nid, nx_current_nid());
+			if (!nx_check(sk->sk_nid, VS_WATCH_P | VS_IDENT))
 				continue;
-			}
+			if (sk->sk_family != st->family)
+				continue;
 			rc = sk;
 			goto out;
 		}
 		st->state = TCP_SEQ_STATE_TIME_WAIT;
 		inet_twsk_for_each(tw, node,
 				   &tcp_hashinfo.ehash[st->bucket].twchain) {
-			if (tw->tw_family != st->family) {
+			vxdprintk(VXD_CBIT(net, 6),
+				"tw: %p [#%d] (from %d)",
+				tw, tw->tw_nid, nx_current_nid());
+			if (!nx_check(tw->tw_nid, VS_WATCH_P | VS_IDENT))
 				continue;
-			}
+			if (tw->tw_family != st->family)
+				continue;
 			rc = tw;
 			goto out;
 		}
@@ -2084,7 +2102,8 @@ static void *established_get_next(struct seq_file *seq, void *cur)
 		tw = cur;
 		tw = tw_next(tw);
 get_tw:
-		while (tw && tw->tw_family != st->family) {
+		while (tw && (tw->tw_family != st->family ||
+			!nx_check(tw->tw_nid, VS_WATCH_P | VS_IDENT))) {
 			tw = tw_next(tw);
 		}
 		if (tw) {
@@ -2108,6 +2127,11 @@ get_tw:
 		sk = sk_next(sk);
 
 	sk_for_each_from(sk, node) {
+		vxdprintk(VXD_CBIT(net, 6),
+			"sk,egn: %p [#%d] (from %d)",
+			sk, sk->sk_nid, nx_current_nid());
+		if (!nx_check(sk->sk_nid, VS_WATCH_P | VS_IDENT))
+			continue;
 		if (sk->sk_family == st->family)
 			goto found;
 	}
@@ -2283,9 +2307,9 @@ static void get_openreq4(struct sock *sk, struct request_sock *req,
 	sprintf(tmpbuf, "%4d: %08X:%04X %08X:%04X"
 		" %02X %08X:%08X %02X:%08lX %08X %5d %8d %u %d %p",
 		i,
-		ireq->loc_addr,
+		nx_map_sock_lback(current_nx_info(), ireq->loc_addr),
 		ntohs(inet_sk(sk)->sport),
-		ireq->rmt_addr,
+		nx_map_sock_lback(current_nx_info(), ireq->rmt_addr),
 		ntohs(ireq->rmt_port),
 		TCP_SYN_RECV,
 		0, 0, /* could print option size, but that is af dependent. */
@@ -2327,7 +2351,10 @@ static void get_tcp4_sock(struct sock *sk, char *tmpbuf, int i)
 
 	sprintf(tmpbuf, "%4d: %08X:%04X %08X:%04X %02X %08X:%08X %02X:%08lX "
 			"%08X %5d %8d %lu %d %p %u %u %u %u %d",
-		i, src, srcp, dest, destp, sk->sk_state,
+		i,
+		nx_map_sock_lback(current_nx_info(), src), srcp,
+		nx_map_sock_lback(current_nx_info(), dest), destp,
+		sk->sk_state,
 		tp->write_seq - tp->snd_una,
 		sk->sk_state == TCP_LISTEN ? sk->sk_ack_backlog :
 					     (tp->rcv_nxt - tp->copied_seq),
@@ -2362,7 +2389,10 @@ static void get_timewait4_sock(struct inet_timewait_sock *tw,
 
 	sprintf(tmpbuf, "%4d: %08X:%04X %08X:%04X"
 		" %02X %08X:%08X %02X:%08lX %08X %5d %8d %d %d %p",
-		i, src, srcp, dest, destp, tw->tw_substate, 0, 0,
+		i,
+		nx_map_sock_lback(current_nx_info(), src), srcp,
+		nx_map_sock_lback(current_nx_info(), dest), destp,
+		tw->tw_substate, 0, 0,
 		3, jiffies_to_clock_t(ttd), 0, 0, 0, 0,
 		atomic_read(&tw->tw_refcnt), tw);
 }

@@ -16,6 +16,7 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/xattr.h>
+#include <linux/mount.h>
 #include <asm/uaccess.h>
 #include "hfsplus_fs.h"
 
@@ -35,7 +36,8 @@ int hfsplus_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 			flags |= FS_NODUMP_FL; /* EXT2_NODUMP_FL */
 		return put_user(flags, (int __user *)arg);
 	case HFSPLUS_IOC_EXT2_SETFLAGS: {
-		if (IS_RDONLY(inode))
+		if (IS_RDONLY(inode) ||
+			(filp && MNT_IS_RDONLY(filp->f_vfsmnt)))
 			return -EROFS;
 
 		if ((current->fsuid != inode->i_uid) && !capable(CAP_FOWNER))

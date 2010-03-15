@@ -18,6 +18,7 @@
 #include <linux/ptrace.h>
 #include <linux/signal.h>
 #include <linux/rcupdate.h>
+#include <linux/vs_limit.h>
 
 #include <asm/poll.h>
 #include <asm/siginfo.h>
@@ -84,6 +85,8 @@ repeat:
 	error = -EMFILE;
 	if (newfd >= current->signal->rlim[RLIMIT_NOFILE].rlim_cur)
 		goto out;
+	if (!vx_files_avail(1))
+		goto out;
 
 	error = expand_files(files, newfd);
 	if (error < 0)
@@ -124,6 +127,7 @@ static int dupfd(struct file *file, unsigned int start)
 		FD_SET(fd, fdt->open_fds);
 		FD_CLR(fd, fdt->close_on_exec);
 		spin_unlock(&files->file_lock);
+		vx_openfd_inc(fd);
 		fd_install(fd, file);
 	} else {
 		spin_unlock(&files->file_lock);
@@ -176,6 +180,9 @@ asmlinkage long sys_dup2(unsigned int oldfd, unsigned int newfd)
 
 	if (tofree)
 		filp_close(tofree, files);
+	else
+		vx_openfd_inc(newfd);	/* fd was unused */
+
 	err = newfd;
 out:
 	return err;

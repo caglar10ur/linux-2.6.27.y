@@ -31,6 +31,7 @@
 #include <linux/seqlock.h>
 #include <linux/swap.h>
 #include <linux/bootmem.h>
+#include <linux/vs_limit.h>
 #include "internal.h"
 
 
@@ -176,6 +177,7 @@ void dput(struct dentry *dentry)
 	if (!dentry)
 		return;
 
+	vx_dentry_dec(dentry);
 repeat:
 	if (atomic_read(&dentry->d_count) == 1)
 		might_sleep();
@@ -188,6 +190,8 @@ repeat:
 		spin_unlock(&dcache_lock);
 		return;
 	}
+
+	vx_dentry_dec(dentry);
 
 	/*
 	 * AV: ->d_delete() is _NOT_ allowed to block now.
@@ -288,6 +292,7 @@ static inline struct dentry * __dget_locked(struct dentry *dentry)
 	if (!list_empty(&dentry->d_lru)) {
 		dentry_stat.nr_unused--;
 		list_del_init(&dentry->d_lru);
+		vx_dentry_inc(dentry);
 	}
 	return dentry;
 }
@@ -898,6 +903,9 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 	struct dentry *dentry;
 	char *dname;
 
+	if (!vx_dentry_avail(1))
+		return NULL;
+
 	dentry = kmem_cache_alloc(dentry_cache, GFP_KERNEL); 
 	if (!dentry)
 		return NULL;
@@ -946,6 +954,7 @@ struct dentry *d_alloc(struct dentry * parent, const struct qstr *name)
 	if (parent)
 		list_add(&dentry->d_u.d_child, &parent->d_subdirs);
 	dentry_stat.nr_dentry++;
+	vx_dentry_inc(dentry);
 	spin_unlock(&dcache_lock);
 
 	return dentry;
@@ -1295,6 +1304,7 @@ struct dentry * __d_lookup(struct dentry * parent, struct qstr * name)
 
 		if (!d_unhashed(dentry)) {
 			atomic_inc(&dentry->d_count);
+			vx_dentry_inc(dentry);
 			found = dentry;
 		}
 		spin_unlock(&dentry->d_lock);

@@ -30,5 +30,4 @@ static inline void devpts_pty_kill(int number) { }
 
 #endif
 
-
 #endif /* _LINUX_DEVPTS_FS_H */

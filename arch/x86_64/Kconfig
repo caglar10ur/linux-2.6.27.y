@@ -782,6 +782,8 @@ endmenu
 
 source "arch/x86_64/Kconfig.debug"
 
+source "kernel/vserver/Kconfig"
+
 source "security/Kconfig"
 
 source "crypto/Kconfig"

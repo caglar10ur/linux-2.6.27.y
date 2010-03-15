@@ -24,6 +24,7 @@
 struct auth_cred {
 	uid_t	uid;
 	gid_t	gid;
+	tag_t	tag;
 	struct group_info *group_info;
 };
 

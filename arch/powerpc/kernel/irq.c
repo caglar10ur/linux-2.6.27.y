@@ -53,6 +53,7 @@
 #include <linux/mutex.h>
 #include <linux/bootmem.h>
 #include <linux/pci.h>
+#include <linux/vs_context.h>
 
 #include <asm/uaccess.h>
 #include <asm/system.h>

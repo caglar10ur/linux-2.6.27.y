@@ -18,6 +18,7 @@
 #include <linux/rcupdate.h>
 #include <linux/smp.h>
 #include <linux/tick.h>
+#include <linux/vs_context.h>
 
 #include <asm/irq.h>
 /*

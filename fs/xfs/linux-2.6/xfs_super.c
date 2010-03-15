@@ -157,6 +157,7 @@ xfs_revalidate_inode(
 	inode->i_nlink	= ip->i_d.di_nlink;
 	inode->i_uid	= ip->i_d.di_uid;
 	inode->i_gid	= ip->i_d.di_gid;
+	inode->i_tag	= ip->i_d.di_tag;
 
 	switch (inode->i_mode & S_IFMT) {
 	case S_IFBLK:
@@ -184,6 +185,14 @@ xfs_revalidate_inode(
 		inode->i_flags |= S_IMMUTABLE;
 	else
 		inode->i_flags &= ~S_IMMUTABLE;
+	if (ip->i_d.di_flags & XFS_DIFLAG_IUNLINK)
+		inode->i_flags |= S_IUNLINK;
+	else
+		inode->i_flags &= ~S_IUNLINK;
+	if (ip->i_d.di_flags & XFS_DIFLAG_BARRIER)
+		inode->i_flags |= S_BARRIER;
+	else
+		inode->i_flags &= ~S_BARRIER;
 	if (ip->i_d.di_flags & XFS_DIFLAG_APPEND)
 		inode->i_flags |= S_APPEND;
 	else
@@ -712,6 +721,12 @@ xfs_fs_remount(
 	int			error;
 
 	error = bhv_vfs_parseargs(vfsp, options, args, 1);
+	if ((args->flags2 & XFSMNT2_TAGGED) &&
+		!(sb->s_flags & MS_TAGGED)) {
+		printk("XFS: %s: tagging not permitted on remount.\n",
+			sb->s_id);
+		error = EINVAL;
+	}
 	if (!error)
 		error = bhv_vfs_mntupdate(vfsp, flags, args);
 	kmem_free(args, sizeof(*args));

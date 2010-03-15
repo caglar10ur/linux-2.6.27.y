@@ -36,6 +36,7 @@
 #include <linux/quotaops.h>
 #include <linux/buffer_head.h>
 #include <linux/bio.h>
+#include <linux/vs_tag.h>
 
 #include "namei.h"
 #include "xattr.h"
@@ -1052,6 +1053,7 @@ static struct dentry *ext3_lookup(struct inode * dir, struct dentry *dentry, str
 
 		if (!inode)
 			return ERR_PTR(-EACCES);
+		dx_propagate_tag(nd, inode);
 	}
 	return d_splice_alias(inode, dentry);
 }
@@ -2443,6 +2445,7 @@ const struct inode_operations ext3_dir_inode_operations = {
 	.removexattr	= generic_removexattr,
 #endif
 	.permission	= ext3_permission,
+	.sync_flags	= ext3_sync_flags,
 };
 
 const struct inode_operations ext3_special_inode_operations = {
@@ -2454,4 +2457,5 @@ const struct inode_operations ext3_special_inode_operations = {
 	.removexattr	= generic_removexattr,
 #endif
 	.permission	= ext3_permission,
+	.sync_flags	= ext3_sync_flags,
 };

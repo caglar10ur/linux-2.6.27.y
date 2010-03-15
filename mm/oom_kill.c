@@ -24,6 +24,7 @@
 #include <linux/cpuset.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
+#include <linux/vs_memory.h>
 
 int sysctl_panic_on_oom;
 /* #define DEBUG */
@@ -64,6 +65,12 @@ unsigned long badness(struct task_struct *p, unsigned long uptime)
 	 * The memory size of the process is the basis for the badness.
 	 */
 	points = mm->total_vm;
+
+	/*
+	 * add points for context badness
+	 */
+
+	points += vx_badness(p, mm);
 
 	/*
 	 * After this unlock we can no longer dereference local variable `mm'
@@ -156,8 +163,8 @@ unsigned long badness(struct task_struct *p, unsigned long uptime)
 	}
 
 #ifdef DEBUG
-	printk(KERN_DEBUG "OOMkill: task %d (%s) got %d points\n",
-	p->pid, p->comm, points);
+	printk(KERN_DEBUG "OOMkill: task %d:#%u (%s) got %d points\n",
+		p->pid, p->xid, p->comm, points);
 #endif
 	return points;
 }
@@ -288,7 +295,8 @@ static void __oom_kill_task(struct task_struct *p, int verbose)
 	}
 
 	if (verbose)
-		printk(KERN_ERR "Killed process %d (%s)\n", p->pid, p->comm);
+		printk(KERN_ERR "Killed process %d:#%u (%s)\n",
+				p->pid, p->xid, p->comm);
 
 	/*
 	 * We give our sacrificial lamb high priority and access to
@@ -358,8 +366,8 @@ static int oom_kill_process(struct task_struct *p, unsigned long points,
 		return 0;
 	}
 
-	printk(KERN_ERR "%s: kill process %d (%s) score %li or a child\n",
-					message, p->pid, p->comm, points);
+	printk(KERN_ERR "%s: kill process %d:#%u (%s) score %li or a child\n",
+				message, p->pid, p->xid, p->comm, points);
 
 	/* Try to kill a child first */
 	list_for_each(tsk, &p->children) {

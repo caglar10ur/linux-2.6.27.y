@@ -82,6 +82,8 @@
 #include <linux/seq_file.h>
 #include <linux/mutex.h>
 #include <linux/nsproxy.h>
+#include <linux/vs_base.h>
+#include <linux/vs_limit.h>
 
 #include <asm/uaccess.h>
 #include "util.h"
@@ -229,6 +231,7 @@ static int newary (struct ipc_namespace *ns, key_t key, int nsems, int semflg)
 
 	sma->sem_perm.mode = (semflg & S_IRWXUGO);
 	sma->sem_perm.key = key;
+	sma->sem_perm.xid = vx_current_xid();
 
 	sma->sem_perm.security = NULL;
 	retval = security_sem_alloc(sma);
@@ -244,6 +247,9 @@ static int newary (struct ipc_namespace *ns, key_t key, int nsems, int semflg)
 		return -ENOSPC;
 	}
 	ns->used_sems += nsems;
+	/* FIXME: obsoleted? */
+	vx_semary_inc(sma);
+	vx_nsems_add(sma, nsems);
 
 	sma->sem_id = sem_buildid(ns, id, sma->sem_perm.seq);
 	sma->sem_base = (struct sem *) &sma[1];
@@ -525,6 +531,9 @@ static void freeary (struct ipc_namespace *ns, struct sem_array *sma, int id)
 	sem_unlock(sma);
 
 	ns->used_sems -= sma->sem_nsems;
+	/* FIXME: obsoleted? */
+	vx_nsems_sub(sma, sma->sem_nsems);
+	vx_semary_dec(sma);
 	size = sizeof (*sma) + sma->sem_nsems * sizeof (struct sem);
 	security_sem_free(sma);
 	ipc_rcu_putref(sma);

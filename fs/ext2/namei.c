@@ -31,6 +31,7 @@
  */
 
 #include <linux/pagemap.h>
+#include <linux/vs_tag.h>
 #include "ext2.h"
 #include "xattr.h"
 #include "acl.h"
@@ -66,6 +67,7 @@ static struct dentry *ext2_lookup(struct inode * dir, struct dentry *dentry, str
 		inode = iget(dir->i_sb, ino);
 		if (!inode)
 			return ERR_PTR(-EACCES);
+		dx_propagate_tag(nd, inode);
 	}
 	return d_splice_alias(inode, dentry);
 }
@@ -391,6 +393,7 @@ const struct inode_operations ext2_dir_inode_operations = {
 #endif
 	.setattr	= ext2_setattr,
 	.permission	= ext2_permission,
+	.sync_flags	= ext2_sync_flags,
 };
 
 const struct inode_operations ext2_special_inode_operations = {
@@ -402,4 +405,5 @@ const struct inode_operations ext2_special_inode_operations = {
 #endif
 	.setattr	= ext2_setattr,
 	.permission	= ext2_permission,
+	.sync_flags	= ext2_sync_flags,
 };

@@ -451,6 +451,8 @@ endmenu
 
 source "arch/sparc64/Kconfig.debug"
 
+source "kernel/vserver/Kconfig"
+
 source "security/Kconfig"
 
 source "crypto/Kconfig"

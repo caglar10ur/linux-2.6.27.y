@@ -29,6 +29,8 @@
 #include <linux/audit.h>
 #include <linux/signal.h>
 #include <linux/mutex.h>
+#include <linux/vs_context.h>
+#include <linux/vs_limit.h>
 
 #include <net/sock.h>
 #include "util.h"
@@ -151,17 +153,20 @@ static struct inode *mqueue_get_inode(struct super_block *sb, int mode,
 			spin_lock(&mq_lock);
 			if (u->mq_bytes + mq_bytes < u->mq_bytes ||
 		 	    u->mq_bytes + mq_bytes >
-			    p->signal->rlim[RLIMIT_MSGQUEUE].rlim_cur) {
+			    p->signal->rlim[RLIMIT_MSGQUEUE].rlim_cur ||
+			    !vx_ipcmsg_avail(p->vx_info, mq_bytes)) {
 				spin_unlock(&mq_lock);
 				goto out_inode;
 			}
 			u->mq_bytes += mq_bytes;
+			vx_ipcmsg_add(p->vx_info, u, mq_bytes);
 			spin_unlock(&mq_lock);
 
 			info->messages = kmalloc(mq_msg_tblsz, GFP_KERNEL);
 			if (!info->messages) {
 				spin_lock(&mq_lock);
 				u->mq_bytes -= mq_bytes;
+				vx_ipcmsg_sub(p->vx_info, u, mq_bytes);
 				spin_unlock(&mq_lock);
 				goto out_inode;
 			}
@@ -257,10 +262,14 @@ static void mqueue_delete_inode(struct inode *inode)
 		   (info->attr.mq_maxmsg * info->attr.mq_msgsize));
 	user = info->user;
 	if (user) {
+		struct vx_info *vxi = lookup_vx_info(user->xid);
+
 		spin_lock(&mq_lock);
 		user->mq_bytes -= mq_bytes;
+		vx_ipcmsg_sub(vxi, user, mq_bytes);
 		queues_count--;
 		spin_unlock(&mq_lock);
+		put_vx_info(vxi);
 		free_uid(user);
 	}
 }
@@ -748,7 +757,7 @@ asmlinkage long sys_mq_unlink(const char __user *u_name)
 	if (inode)
 		atomic_inc(&inode->i_count);
 
-	err = vfs_unlink(dentry->d_parent->d_inode, dentry);
+	err = vfs_unlink(dentry->d_parent->d_inode, dentry, NULL);
 out_err:
 	dput(dentry);
 

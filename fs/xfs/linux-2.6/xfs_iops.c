@@ -51,6 +51,7 @@
 #include <linux/xattr.h>
 #include <linux/namei.h>
 #include <linux/security.h>
+#include <linux/vs_tag.h>
 
 /*
  * Get a XFS inode from a given vnode.
@@ -400,6 +401,7 @@ xfs_vn_lookup(
 		d_add(dentry, NULL);
 		return NULL;
 	}
+	dx_propagate_tag(nd, vn_to_inode(cvp));
 
 	return d_splice_alias(vn_to_inode(cvp), dentry);
 }
@@ -657,6 +659,10 @@ xfs_vn_setattr(
 	int		flags = 0;
 	int		error;
 
+	error = inode_change_ok(inode, attr);
+	if (error)
+		return error;
+
 	if (ia_valid & ATTR_UID) {
 		vattr.va_mask |= XFS_AT_UID;
 		vattr.va_uid = attr->ia_uid;
@@ -664,6 +670,10 @@ xfs_vn_setattr(
 	if (ia_valid & ATTR_GID) {
 		vattr.va_mask |= XFS_AT_GID;
 		vattr.va_gid = attr->ia_gid;
+	}
+	if ((ia_valid & ATTR_TAG) && IS_TAGGED(inode)) {
+		vattr.va_mask |= XFS_AT_TAG;
+		vattr.va_tag = attr->ia_tag;
 	}
 	if (ia_valid & ATTR_SIZE) {
 		vattr.va_mask |= XFS_AT_SIZE;
@@ -707,6 +717,42 @@ xfs_vn_truncate(
 	struct inode	*inode)
 {
 	block_truncate_page(inode->i_mapping, inode->i_size, xfs_get_blocks);
+}
+
+STATIC int
+xfs_vn_sync_flags(struct inode *inode)
+{
+	unsigned int oldflags, newflags;
+	int		flags = 0;
+	int		error;
+	bhv_vattr_t	vattr;
+	bhv_vnode_t	*vp = vn_from_inode(inode);
+
+	memset(&vattr, 0, sizeof vattr);
+
+	vattr.va_mask = XFS_AT_XFLAGS;
+	error = bhv_vop_getattr(vp, &vattr, 0, NULL);
+
+	if (error)
+		return error;
+	oldflags = vattr.va_xflags;
+	newflags = oldflags & ~(XFS_XFLAG_IMMUTABLE |
+		XFS_XFLAG_IUNLINK | XFS_XFLAG_BARRIER);
+
+	if (IS_IMMUTABLE(inode))
+		newflags |= XFS_XFLAG_IMMUTABLE;
+	if (IS_IUNLINK(inode))
+		newflags |= XFS_XFLAG_IUNLINK;
+	if (IS_BARRIER(inode))
+		newflags |= XFS_XFLAG_BARRIER;
+
+	if (oldflags ^ newflags) {
+		vattr.va_xflags = newflags;
+		vattr.va_mask |= XFS_AT_XFLAGS;
+		error = bhv_vop_setattr(vp, &vattr, flags, NULL);
+	}
+	vn_revalidate(vp);
+	return error;
 }
 
 STATIC int
@@ -822,6 +868,7 @@ const struct inode_operations xfs_inode_operations = {
 	.getxattr		= xfs_vn_getxattr,
 	.listxattr		= xfs_vn_listxattr,
 	.removexattr		= xfs_vn_removexattr,
+	.sync_flags		= xfs_vn_sync_flags,
 };
 
 const struct inode_operations xfs_dir_inode_operations = {
@@ -841,6 +888,7 @@ const struct inode_operations xfs_dir_inode_operations = {
 	.getxattr		= xfs_vn_getxattr,
 	.listxattr		= xfs_vn_listxattr,
 	.removexattr		= xfs_vn_removexattr,
+	.sync_flags		= xfs_vn_sync_flags,
 };
 
 const struct inode_operations xfs_symlink_inode_operations = {
@@ -854,4 +902,5 @@ const struct inode_operations xfs_symlink_inode_operations = {
 	.getxattr		= xfs_vn_getxattr,
 	.listxattr		= xfs_vn_listxattr,
 	.removexattr		= xfs_vn_removexattr,
+	.sync_flags		= xfs_vn_sync_flags,
 };

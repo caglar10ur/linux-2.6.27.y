@@ -27,6 +27,7 @@
 #include <linux/binfmts.h>
 #include <linux/personality.h>
 #include <linux/init.h>
+#include <linux/vs_memory.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>

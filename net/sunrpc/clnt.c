@@ -30,6 +30,7 @@
 #include <linux/smp_lock.h>
 #include <linux/utsname.h>
 #include <linux/workqueue.h>
+#include <linux/vs_cvirt.h>
 
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/rpc_pipe_fs.h>
@@ -249,7 +250,9 @@ struct rpc_clnt *rpc_create(struct rpc_create_args *args)
 		clnt->cl_oneshot = 1;
 	if (args->flags & RPC_CLNT_CREATE_DISCRTRY)
 		clnt->cl_discrtry = 1;
-
+	/* TODO: handle RPC_CLNT_CREATE_TAGGED
+	if (args->flags & RPC_CLNT_CREATE_TAGGED)
+		clnt->cl_tag = 1; */
 	return clnt;
 }
 EXPORT_SYMBOL_GPL(rpc_create);

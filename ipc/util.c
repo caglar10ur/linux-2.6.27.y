@@ -32,6 +32,8 @@
 #include <linux/proc_fs.h>
 #include <linux/audit.h>
 #include <linux/nsproxy.h>
+#include <linux/vs_base.h>
+#include <linux/vserver/global.h>
 
 #include <asm/unistd.h>
 
@@ -72,6 +74,7 @@ static struct ipc_namespace *clone_ipc_ns(struct ipc_namespace *old_ns)
 		goto err_shm;
 
 	kref_init(&ns->kref);
+	atomic_inc(&vs_global_ipc_ns);
 	return ns;
 
 err_shm:
@@ -108,6 +111,7 @@ void free_ipc_ns(struct kref *kref)
 	sem_exit_ns(ns);
 	msg_exit_ns(ns);
 	shm_exit_ns(ns);
+	atomic_dec(&vs_global_ipc_ns);
 	kfree(ns);
 }
 #else

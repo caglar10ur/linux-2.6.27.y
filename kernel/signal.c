@@ -26,6 +26,8 @@
 #include <linux/freezer.h>
 #include <linux/pid_namespace.h>
 #include <linux/nsproxy.h>
+#include <linux/vs_context.h>
+#include <linux/vs_pid.h>
 
 #include <asm/param.h>
 #include <asm/uaccess.h>
@@ -523,19 +525,34 @@ static int check_kill_permission(int sig, struct siginfo *info,
 	if (!valid_signal(sig))
 		return error;
 
+	if ((info != SEND_SIG_NOINFO) &&
+		(is_si_special(info) || !SI_FROMUSER(info)))
+		goto skip;
+
+	vxdprintk(VXD_CBIT(misc, 7),
+		"check_kill_permission(%d,%p,%p[#%u,%u])",
+		sig, info, t, vx_task_xid(t), t->pid);
+
 	error = audit_signal_info(sig, t); /* Let audit system see the signal */
 	if (error)
 		return error;
 
 	error = -EPERM;
-	if ((info == SEND_SIG_NOINFO || (!is_si_special(info) && SI_FROMUSER(info)))
-	    && ((sig != SIGCONT) ||
+	if (((sig != SIGCONT) ||
 		(process_session(current) != process_session(t)))
 	    && (current->euid ^ t->suid) && (current->euid ^ t->uid)
 	    && (current->uid ^ t->suid) && (current->uid ^ t->uid)
 	    && !capable(CAP_KILL))
 		return error;
 
+	error = -ESRCH;
+	if (!vx_check(vx_task_xid(t), VS_WATCH_P | VS_IDENT)) {
+		vxdprintk(current->xid || VXD_CBIT(misc, 7),
+			"signal %d[%p] xid mismatch %p[#%u,%u] xid=#%u",
+			sig, info, t, vx_task_xid(t), t->pid, current->xid);
+		return error;
+	}
+skip:
 	return security_task_kill(t, info, sig, 0);
 }
 
@@ -1043,7 +1060,7 @@ int kill_pid_info(int sig, struct siginfo *info, struct pid *pid)
 
 	p = pid_task(pid, PIDTYPE_PID);
 	error = -ESRCH;
-	if (p)
+	if (p && vx_check(vx_task_xid(p), VS_IDENT))
 		error = group_send_sig_info(sig, info, p);
 
 	if (unlikely(sig_needs_tasklist(sig)))
@@ -1057,7 +1074,7 @@ kill_proc_info(int sig, struct siginfo *info, pid_t pid)
 {
 	int error;
 	rcu_read_lock();
-	error = kill_pid_info(sig, info, find_pid(pid));
+	error = kill_pid_info(sig, info, find_pid(vx_rmap_pid(pid)));
 	rcu_read_unlock();
 	return error;
 }
@@ -1118,7 +1135,9 @@ static int kill_something_info(int sig, struct siginfo *info, int pid)
 
 		read_lock(&tasklist_lock);
 		for_each_process(p) {
-			if (p->pid > 1 && p->tgid != current->tgid) {
+			if (vx_check(vx_task_xid(p), VS_ADMIN_P|VS_IDENT) &&
+				p->pid > 1 && p->tgid != current->tgid &&
+				!vx_current_initpid(p->pid)) {
 				int err = group_send_sig_info(sig, info, p);
 				++count;
 				if (err != -EPERM)
@@ -1128,9 +1147,9 @@ static int kill_something_info(int sig, struct siginfo *info, int pid)
 		read_unlock(&tasklist_lock);
 		ret = count ? retval : -ESRCH;
 	} else if (pid < 0) {
-		ret = kill_pgrp_info(sig, info, find_pid(-pid));
+		ret = kill_pgrp_info(sig, info, find_pid(vx_rmap_pid(-pid)));
 	} else {
-		ret = kill_pid_info(sig, info, find_pid(pid));
+		ret = kill_pid_info(sig, info, find_pid(vx_rmap_pid(pid)));
 	}
 	rcu_read_unlock();
 	return ret;
@@ -1812,6 +1831,11 @@ relock:
 		 * its parent pid space.
 		 */
 		if (current == child_reaper(current))
+			continue;
+
+		/* virtual init is protected against user signals */
+		if ((info->si_code == SI_USER) &&
+			vx_current_initpid(current->pid))
 			continue;
 
 		if (sig_kernel_stop(signr)) {

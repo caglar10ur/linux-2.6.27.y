@@ -56,6 +56,9 @@
 #include <linux/audit.h>
 #include <linux/selinux.h>
 #include <linux/mutex.h>
+#include <linux/vs_context.h>
+#include <linux/vs_network.h>
+#include <linux/vs_limit.h>
 
 #include <net/sock.h>
 #include <net/scm.h>
@@ -883,6 +886,10 @@ static inline int do_one_broadcast(struct sock *sk,
 
 	if (nlk->pid == p->pid || p->group - 1 >= nlk->ngroups ||
 	    !test_bit(p->group - 1, nlk->groups))
+		goto out;
+
+	if (sk->sk_nx_info &&
+	    (p->group == RTNLGRP_IPV4_IFADDR || p->group == RTNLGRP_IPV6_IFADDR))
 		goto out;
 
 	if (p->failure) {

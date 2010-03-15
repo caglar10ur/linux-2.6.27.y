@@ -31,6 +31,7 @@
 #include <linux/bootmem.h>
 #include <linux/syscalls.h>
 #include <linux/jiffies.h>
+#include <linux/vs_cvirt.h>
 
 #include <asm/uaccess.h>
 
@@ -182,18 +183,13 @@ int do_syslog(int type, char __user *buf, int len)
 	unsigned long i, j, limit, count;
 	int do_clear = 0;
 	char c;
-	int error = 0;
+	int error;
 
 	error = security_syslog(type);
 	if (error)
 		return error;
 
-	switch (type) {
-	case 0:		/* Close log */
-		break;
-	case 1:		/* Open log */
-		break;
-	case 2:		/* Read from log */
+	if ((type >= 2) && (type <= 4)) {
 		error = -EINVAL;
 		if (!buf || len < 0)
 			goto out;
@@ -204,6 +200,16 @@ int do_syslog(int type, char __user *buf, int len)
 			error = -EFAULT;
 			goto out;
 		}
+	}
+	if (!vx_check(0, VS_ADMIN|VS_WATCH))
+		return vx_do_syslog(type, buf, len);
+
+	switch (type) {
+	case 0:		/* Close log */
+		break;
+	case 1:		/* Open log */
+		break;
+	case 2:		/* Read from log */
 		error = wait_event_interruptible(log_wait,
 							(log_start - log_end));
 		if (error)
@@ -228,16 +234,6 @@ int do_syslog(int type, char __user *buf, int len)
 		do_clear = 1;
 		/* FALL THRU */
 	case 3:		/* Read last kernel messages */
-		error = -EINVAL;
-		if (!buf || len < 0)
-			goto out;
-		error = 0;
-		if (!len)
-			goto out;
-		if (!access_ok(VERIFY_WRITE, buf, len)) {
-			error = -EFAULT;
-			goto out;
-		}
 		count = len;
 		if (count > log_buf_len)
 			count = log_buf_len;

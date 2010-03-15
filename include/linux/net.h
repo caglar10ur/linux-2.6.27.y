@@ -63,6 +63,7 @@ typedef enum {
 #define SOCK_NOSPACE		2
 #define SOCK_PASSCRED		3
 #define SOCK_PASSSEC		4
+#define SOCK_USER_SOCKET	5
 
 #ifndef ARCH_HAS_SOCKET_TYPES
 /**

@@ -75,6 +75,8 @@
 #include <linux/cpuset.h>
 #include <linux/rcupdate.h>
 #include <linux/delayacct.h>
+#include <linux/vs_context.h>
+#include <linux/vs_network.h>
 
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
@@ -134,8 +136,9 @@ static const char *task_state_array[] = {
 	"D (disk sleep)",	/*  2 */
 	"T (stopped)",		/*  4 */
 	"T (tracing stop)",	/*  8 */
-	"Z (zombie)",		/* 16 */
-	"X (dead)"		/* 32 */
+	"H (on hold)",		/* 16 */
+	"Z (zombie)",		/* 32 */
+	"X (dead)",		/* 64 */
 };
 
 static inline const char * get_task_state(struct task_struct *tsk)
@@ -144,7 +147,8 @@ static inline const char * get_task_state(struct task_struct *tsk)
 					    TASK_INTERRUPTIBLE |
 					    TASK_UNINTERRUPTIBLE |
 					    TASK_STOPPED |
-					    TASK_TRACED)) |
+					   TASK_TRACED |
+					   TASK_ONHOLD)) |
 			(tsk->exit_state & (EXIT_ZOMBIE |
 					    EXIT_DEAD));
 	const char **p = &task_state_array[0];
@@ -161,8 +165,16 @@ static inline char * task_state(struct task_struct *p, char *buffer)
 	struct group_info *group_info;
 	int g;
 	struct fdtable *fdt = NULL;
+	pid_t pid, ptgid, tppid, tgid;
 
 	rcu_read_lock();
+	tgid = vx_map_tgid(p->tgid);
+	pid = vx_map_pid(p->pid);
+	ptgid = vx_map_pid(pid_alive(p) ?
+		rcu_dereference(p->real_parent)->tgid : 0);
+	tppid = vx_map_pid(pid_alive(p) && p->ptrace ?
+		rcu_dereference(p->parent)->pid : 0);
+
 	buffer += sprintf(buffer,
 		"State:\t%s\n"
 		"SleepAVG:\t%lu%%\n"
@@ -174,9 +186,7 @@ static inline char * task_state(struct task_struct *p, char *buffer)
 		"Gid:\t%d\t%d\t%d\t%d\n",
 		get_task_state(p),
 		(p->sleep_avg/1024)*100/(1020000000/1024),
-	       	p->tgid, p->pid,
-	       	pid_alive(p) ? rcu_dereference(p->real_parent)->tgid : 0,
-		pid_alive(p) && p->ptrace ? rcu_dereference(p->parent)->pid : 0,
+		tgid, pid, (pid > 1) ? ptgid : 0, tppid,
 		p->uid, p->euid, p->suid, p->fsuid,
 		p->gid, p->egid, p->sgid, p->fsgid);
 
@@ -283,12 +293,15 @@ static inline char * task_sig(struct task_struct *p, char *buffer)
 
 static inline char *task_cap(struct task_struct *p, char *buffer)
 {
-    return buffer + sprintf(buffer, "CapInh:\t%016x\n"
-			    "CapPrm:\t%016x\n"
-			    "CapEff:\t%016x\n",
-			    cap_t(p->cap_inheritable),
-			    cap_t(p->cap_permitted),
-			    cap_t(p->cap_effective));
+	struct vx_info *vxi = p->vx_info;
+
+	return buffer + sprintf(buffer,
+		"CapInh:\t%016x\n"
+		"CapPrm:\t%016x\n"
+		"CapEff:\t%016x\n",
+		(unsigned)vx_info_mbcap(vxi, p->cap_inheritable),
+		(unsigned)vx_info_mbcap(vxi, p->cap_permitted),
+		(unsigned)vx_info_mbcap(vxi, p->cap_effective));
 }
 
 int proc_pid_status(struct task_struct *task, char * buffer)
@@ -306,6 +319,12 @@ int proc_pid_status(struct task_struct *task, char * buffer)
 	buffer = task_sig(task, buffer);
 	buffer = task_cap(task, buffer);
 	buffer = cpuset_task_status_allowed(task, buffer);
+
+	if (task_vx_flags(task, VXF_HIDE_VINFO, 0))
+		goto skip;
+	buffer += sprintf (buffer,"VxID: %d\n", vx_task_xid(task));
+	buffer += sprintf (buffer,"NxID: %d\n", nx_task_nid(task));
+skip:
 #if defined(CONFIG_S390)
 	buffer = task_show_regs(task, buffer);
 #endif
@@ -320,7 +339,7 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
 	sigset_t sigign, sigcatch;
 	char state;
 	int res;
- 	pid_t ppid = 0, pgid = -1, sid = -1;
+	pid_t pid = 0, ppid = 0, pgid = -1, sid = -1;
 	int num_threads = 0;
 	struct mm_struct *mm;
 	unsigned long long start_time;
@@ -382,8 +401,10 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
 		}
 
 		sid = signal_session(sig);
-		pgid = process_group(task);
-		ppid = rcu_dereference(task->real_parent)->tgid;
+		pid = vx_info_map_pid(task->vx_info, task->pid);
+		pgid = vx_info_map_pid(task->vx_info, process_group(task));
+		ppid = (pid > 1) ? vx_info_map_tgid(task->vx_info,
+			rcu_dereference(task->real_parent)->tgid) : 0;
 
 		unlock_task_sighand(task, &flags);
 	}
@@ -410,10 +431,21 @@ static int do_task_stat(struct task_struct *task, char * buffer, int whole)
 	/* convert nsec -> ticks */
 	start_time = nsec_to_clock_t(start_time);
 
+	/* fixup start time for virt uptime */
+	if (vx_flags(VXF_VIRT_UPTIME, 0)) {
+		unsigned long long bias =
+			current->vx_info->cvirt.bias_clock;
+
+		if (start_time > bias)
+			start_time -= bias;
+		else
+			start_time = 0;
+	}
+
 	res = sprintf(buffer,"%d (%s) %c %d %d %d %d %d %u %lu \
 %lu %lu %lu %lu %lu %ld %ld %ld %ld %d 0 %llu %lu %ld %lu %lu %lu %lu %lu \
 %lu %lu %lu %lu %lu %lu %lu %lu %d %d %u %u %llu\n",
-		task->pid,
+		pid,
 		tcomm,
 		state,
 		ppid,

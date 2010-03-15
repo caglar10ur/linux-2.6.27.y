@@ -117,6 +117,7 @@
 #include <linux/err.h>
 #include <linux/ctype.h>
 #include <linux/if_arp.h>
+#include <linux/vs_inet.h>
 
 /*
  *	The list of packet types we will receive (as opposed to discard)
@@ -2120,6 +2121,8 @@ static int dev_ifconf(char __user *arg)
 
 	total = 0;
 	for_each_netdev(dev) {
+		if (!nx_dev_visible(current->nx_info, dev))
+			continue;
 		for (i = 0; i < NPROTO; i++) {
 			if (gifconf_list[i]) {
 				int done;
@@ -2183,6 +2186,9 @@ void dev_seq_stop(struct seq_file *seq, void *v)
 static void dev_seq_printf_stats(struct seq_file *seq, struct net_device *dev)
 {
 	struct net_device_stats *stats = dev->get_stats(dev);
+
+	if (!nx_dev_visible(current->nx_info, dev))
+		return;
 
 	seq_printf(seq, "%6s:%8lu %7lu %4lu %4lu %4lu %5lu %10lu %9lu "
 		   "%8lu %7lu %4lu %4lu %4lu %5lu %7lu %10lu\n",

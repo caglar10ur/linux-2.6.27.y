@@ -56,6 +56,8 @@
 
 #include <asm/tlb.h>
 #include <asm/unistd.h>
+#include <linux/vs_sched.h>
+#include <linux/vs_cvirt.h>
 
 /*
  * Scheduler clock - returns current time in nanosec units.
@@ -280,6 +282,16 @@ struct rq {
 
 	struct task_struct *migration_thread;
 	struct list_head migration_queue;
+#endif
+	unsigned long norm_time;
+	unsigned long idle_time;
+#ifdef CONFIG_VSERVER_IDLETIME
+	int idle_skip;
+#endif
+#ifdef CONFIG_VSERVER_HARDCPU
+	struct list_head hold_queue;
+	unsigned long nr_onhold;
+	int idle_tokens;
 #endif
 
 #ifdef CONFIG_SCHEDSTATS
@@ -714,6 +726,7 @@ sched_info_switch(struct task_struct *prev, struct task_struct *next)
  */
 static void dequeue_task(struct task_struct *p, struct prio_array *array)
 {
+	BUG_ON(p->state & TASK_ONHOLD);
 	array->nr_active--;
 	list_del(&p->run_list);
 	if (list_empty(array->queue + p->prio))
@@ -722,6 +735,7 @@ static void dequeue_task(struct task_struct *p, struct prio_array *array)
 
 static void enqueue_task(struct task_struct *p, struct prio_array *array)
 {
+	BUG_ON(p->state & TASK_ONHOLD);
 	sched_info_queued(p);
 	list_add_tail(&p->run_list, array->queue + p->prio);
 	__set_bit(p->prio, array->bitmap);
@@ -735,12 +749,14 @@ static void enqueue_task(struct task_struct *p, struct prio_array *array)
  */
 static void requeue_task(struct task_struct *p, struct prio_array *array)
 {
+	BUG_ON(p->state & TASK_ONHOLD);
 	list_move_tail(&p->run_list, array->queue + p->prio);
 }
 
 static inline void
 enqueue_task_head(struct task_struct *p, struct prio_array *array)
 {
+	BUG_ON(p->state & TASK_ONHOLD);
 	list_add(&p->run_list, array->queue + p->prio);
 	__set_bit(p->prio, array->bitmap);
 	array->nr_active++;
@@ -769,6 +785,10 @@ static inline int __normal_prio(struct task_struct *p)
 	bonus = CURRENT_BONUS(p) - MAX_BONUS / 2;
 
 	prio = p->static_prio - bonus;
+
+	/* adjust effective priority */
+	prio = vx_adjust_prio(p, prio, MAX_USER_PRIO);
+
 	if (prio < MAX_RT_PRIO)
 		prio = MAX_RT_PRIO;
 	if (prio > MAX_PRIO-1)
@@ -878,6 +898,9 @@ static int effective_prio(struct task_struct *p)
 	return p->prio;
 }
 
+#include "sched_mon.h"
+
+
 /*
  * __activate_task - move a task to the runqueue.
  */
@@ -887,6 +910,7 @@ static void __activate_task(struct task_struct *p, struct rq *rq)
 
 	if (batch_task(p))
 		target = rq->expired;
+	vxm_activate_task(p, rq);
 	enqueue_task(p, target);
 	inc_nr_running(p, rq);
 }
@@ -896,6 +920,7 @@ static void __activate_task(struct task_struct *p, struct rq *rq)
  */
 static inline void __activate_idle_task(struct task_struct *p, struct rq *rq)
 {
+	vxm_activate_idle(p, rq);
 	enqueue_task_head(p, rq->active);
 	inc_nr_running(p, rq);
 }
@@ -1030,18 +1055,29 @@ static void activate_task(struct task_struct *p, struct rq *rq, int local)
 	}
 	p->timestamp = now;
 out:
+	vx_activate_task(p);
 	__activate_task(p, rq);
 }
 
 /*
- * deactivate_task - remove a task from the runqueue.
+ * __deactivate_task - remove a task from the runqueue.
  */
-static void deactivate_task(struct task_struct *p, struct rq *rq)
+static void __deactivate_task(struct task_struct *p, struct rq *rq)
 {
 	dec_nr_running(p, rq);
 	dequeue_task(p, p->array);
+	vxm_deactivate_task(p, rq);
 	p->array = NULL;
 }
+
+static inline
+void deactivate_task(struct task_struct *p, struct rq *rq)
+{
+	vx_deactivate_task(p);
+	__deactivate_task(p, rq);
+}
+
+#include "sched_hard.h"
 
 /*
  * resched_task - mark a task 'to be rescheduled now'.
@@ -1129,6 +1165,7 @@ migrate_task(struct task_struct *p, int dest_cpu, struct migration_req *req)
 {
 	struct rq *rq = task_rq(p);
 
+	vxm_migrate_task(p, rq, dest_cpu);
 	/*
 	 * If the task is not on a runqueue (and not running), then
 	 * it is sufficient to simply update the task's cpu field.
@@ -1518,6 +1555,12 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state, int sync)
 
 	rq = task_rq_lock(p, &flags);
 	old_state = p->state;
+
+	/* we need to unhold suspended tasks */
+	if (old_state & TASK_ONHOLD) {
+		vx_unhold_task(p, rq);
+		old_state = p->state;
+	}
 	if (!(old_state & state))
 		goto out;
 
@@ -1625,6 +1668,7 @@ out_activate:
 #endif /* CONFIG_SMP */
 	if (old_state == TASK_UNINTERRUPTIBLE) {
 		rq->nr_uninterruptible--;
+		vx_uninterruptible_dec(p);
 		/*
 		 * Tasks on involuntary sleep don't earn
 		 * sleep_avg beyond just interactive state.
@@ -1676,7 +1720,7 @@ int fastcall wake_up_state(struct task_struct *p, unsigned int state)
 	return try_to_wake_up(p, state, 0);
 }
 
-static void task_running_tick(struct rq *rq, struct task_struct *p);
+static void task_running_tick(struct rq *rq, struct task_struct *p, int cpu);
 /*
  * Perform scheduler related setup for a newly forked process p.
  * p is forked by current.
@@ -1737,7 +1781,7 @@ void fastcall sched_fork(struct task_struct *p, int clone_flags)
 		 * runqueue lock is not a problem.
 		 */
 		current->time_slice = 1;
-		task_running_tick(cpu_rq(cpu), current);
+		task_running_tick(cpu_rq(cpu), current, cpu);
 	}
 	local_irq_enable();
 	put_cpu();
@@ -1772,6 +1816,7 @@ void fastcall wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
 
 	p->prio = effective_prio(p);
 
+	vx_activate_task(p);
 	if (likely(cpu == this_cpu)) {
 		if (!(clone_flags & CLONE_VM)) {
 			/*
@@ -1783,6 +1828,7 @@ void fastcall wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
 				__activate_task(p, rq);
 			else {
 				p->prio = current->prio;
+				BUG_ON(p->state & TASK_ONHOLD);
 				p->normal_prio = current->normal_prio;
 				list_add_tail(&p->run_list, &current->run_list);
 				p->array = current->array;
@@ -3351,13 +3397,16 @@ static inline int expired_starving(struct rq *rq)
 void account_user_time(struct task_struct *p, cputime_t cputime)
 {
 	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+	struct vx_info *vxi = p->vx_info;  /* p is _always_ current */
 	cputime64_t tmp;
+	int nice = (TASK_NICE(p) > 0);
 
 	p->utime = cputime_add(p->utime, cputime);
+	vx_account_user(vxi, cputime, nice);
 
 	/* Add user time to cpustat. */
 	tmp = cputime_to_cputime64(cputime);
-	if (TASK_NICE(p) > 0)
+	if (nice)
 		cpustat->nice = cputime64_add(cpustat->nice, tmp);
 	else
 		cpustat->user = cputime64_add(cpustat->user, tmp);
@@ -3373,10 +3422,12 @@ void account_system_time(struct task_struct *p, int hardirq_offset,
 			 cputime_t cputime)
 {
 	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+	struct vx_info *vxi = p->vx_info;  /* p is _always_ current */
 	struct rq *rq = this_rq();
 	cputime64_t tmp;
 
 	p->stime = cputime_add(p->stime, cputime);
+	vx_account_system(vxi, cputime, (p == rq->idle));
 
 	/* Add system time to cpustat. */
 	tmp = cputime_to_cputime64(cputime);
@@ -3415,7 +3466,7 @@ void account_steal_time(struct task_struct *p, cputime_t steal)
 		cpustat->steal = cputime64_add(cpustat->steal, tmp);
 }
 
-static void task_running_tick(struct rq *rq, struct task_struct *p)
+static void task_running_tick(struct rq *rq, struct task_struct *p, int cpu)
 {
 	if (p->array != rq->active) {
 		/* Task has expired but was not scheduled yet */
@@ -3445,7 +3496,7 @@ static void task_running_tick(struct rq *rq, struct task_struct *p)
 		}
 		goto out_unlock;
 	}
-	if (!--p->time_slice) {
+	if (vx_need_resched(p, --p->time_slice, cpu)) {
 		dequeue_task(p, rq->active);
 		set_tsk_need_resched(p);
 		p->prio = effective_prio(p);
@@ -3506,9 +3557,12 @@ void scheduler_tick(void)
 	struct rq *rq = cpu_rq(cpu);
 
 	update_cpu_clock(p, rq, now);
+	vxm_sync(now, cpu);
 
-	if (!idle_at_tick)
-		task_running_tick(rq, p);
+	if (idle_at_tick)
+		vx_idle_resched(rq);
+	else
+		task_running_tick(rq, p, cpu);
 #ifdef CONFIG_SMP
 	update_load(rq);
 	rq->idle_at_tick = idle_at_tick;
@@ -3630,14 +3684,25 @@ need_resched_nonpreemptible:
 				unlikely(signal_pending(prev))))
 			prev->state = TASK_RUNNING;
 		else {
-			if (prev->state == TASK_UNINTERRUPTIBLE)
+			if (prev->state == TASK_UNINTERRUPTIBLE) {
 				rq->nr_uninterruptible++;
+				vx_uninterruptible_inc(prev);
+			}
 			deactivate_task(prev, rq);
 		}
 	}
 
 	cpu = smp_processor_id();
+	vx_set_rq_time(rq, jiffies);
+try_unhold:
+	vx_try_unhold(rq, cpu);
+pick_next:
+
 	if (unlikely(!rq->nr_running)) {
+		/* can we skip idle time? */
+		if (vx_try_skip(rq, cpu))
+			goto try_unhold;
+
 		idle_balance(cpu, rq);
 		if (!rq->nr_running) {
 			next = rq->idle;
@@ -3662,6 +3727,10 @@ need_resched_nonpreemptible:
 	idx = sched_find_first_bit(array->bitmap);
 	queue = array->queue + idx;
 	next = list_entry(queue->next, struct task_struct, run_list);
+
+	/* check before we schedule this context */
+	if (!vx_schedule(next, rq, cpu))
+		goto pick_next;
 
 	if (!rt_task(next) && interactive_sleep(next->sleep_type)) {
 		unsigned long long delta = now - next->timestamp;
@@ -4263,7 +4332,7 @@ asmlinkage long sys_nice(int increment)
 		nice = 19;
 
 	if (increment < 0 && !can_nice(current, nice))
-		return -EPERM;
+		return vx_flags(VXF_IGNEG_NICE, 0) ? 0 : -EPERM;
 
 	retval = security_task_setnice(current, nice);
 	if (retval)
@@ -4435,6 +4504,7 @@ recheck:
 	oldprio = p->prio;
 	__setscheduler(p, policy, param->sched_priority);
 	if (array) {
+		vx_activate_task(p);
 		__activate_task(p, rq);
 		/*
 		 * Reschedule if we are currently running on this runqueue and
@@ -5188,6 +5258,7 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 		p->timestamp = p->timestamp - rq_src->most_recent_timestamp
 				+ rq_dest->most_recent_timestamp;
 		deactivate_task(p, rq_src);
+		vx_activate_task(p);
 		__activate_task(p, rq_dest);
 		if (TASK_PREEMPTS_CURR(p, rq_dest))
 			resched_task(rq_dest->curr);
@@ -7058,7 +7129,10 @@ void __init sched_init(void)
 		INIT_LIST_HEAD(&rq->migration_queue);
 #endif
 		atomic_set(&rq->nr_iowait, 0);
-
+#ifdef CONFIG_VSERVER_HARDCPU
+		INIT_LIST_HEAD(&rq->hold_queue);
+		rq->nr_onhold = 0;
+#endif
 		for (j = 0; j < 2; j++) {
 			array = rq->arrays + j;
 			for (k = 0; k < MAX_PRIO; k++) {
@@ -7144,6 +7218,7 @@ void normalize_rt_tasks(void)
 			deactivate_task(p, task_rq(p));
 		__setscheduler(p, SCHED_NORMAL, 0);
 		if (array) {
+			vx_activate_task(p);
 			__activate_task(p, task_rq(p));
 			resched_task(rq->curr);
 		}

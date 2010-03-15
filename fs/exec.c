@@ -51,6 +51,7 @@
 #include <linux/cn_proc.h>
 #include <linux/audit.h>
 #include <linux/signalfd.h>
+#include <linux/vs_memory.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -440,7 +441,8 @@ int setup_arg_pages(struct linux_binprm *bprm,
 			kmem_cache_free(vm_area_cachep, mpnt);
 			return ret;
 		}
-		mm->stack_vm = mm->total_vm = vma_pages(mpnt);
+		vx_vmpages_sub(mm, mm->total_vm - vma_pages(mpnt));
+		mm->stack_vm = mm->total_vm;
 	}
 
 	for (i = 0 ; i < MAX_ARG_PAGES ; i++) {
@@ -1336,7 +1338,7 @@ static int format_corename(char *corename, const char *pattern, long signr)
 			/* UNIX time of coredump */
 			case 't': {
 				struct timeval tv;
-				do_gettimeofday(&tv);
+				vx_gettimeofday(&tv);
 				rc = snprintf(out_ptr, out_end - out_ptr,
 					      "%lu", tv.tv_sec);
 				if (rc > out_end - out_ptr)

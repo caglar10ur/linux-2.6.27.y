@@ -142,6 +142,7 @@ int ocfs2_aio_write(struct file *file, struct kiocb *req, struct iocb *iocb);
 
 void ocfs2_set_inode_flags(struct inode *inode);
 void ocfs2_get_inode_flags(struct ocfs2_inode_info *oi);
+int ocfs2_sync_flags(struct inode *inode);
 
 static inline blkcnt_t ocfs2_inode_sector_count(struct inode *inode)
 {

@@ -49,6 +49,7 @@
 #include "xfs_quota.h"
 #include "xfs_acl.h"
 
+#include <linux/vs_tag.h>
 
 kmem_zone_t *xfs_ifork_zone;
 kmem_zone_t *xfs_inode_zone;
@@ -736,20 +737,35 @@ xfs_xlate_dinode_core(
 	xfs_dinode_core_t	*buf_core = (xfs_dinode_core_t *)buf;
 	xfs_dinode_core_t	*mem_core = (xfs_dinode_core_t *)dip;
 	xfs_arch_t		arch = ARCH_CONVERT;
+	uint32_t		uid = 0, gid = 0;
+	uint16_t		tag = 0;
 
 	ASSERT(dir);
+
+	if (dir < 0) {
+		tag = mem_core->di_tag;
+		/* FIXME: supposed to use superblock flag */
+		uid = TAGINO_UID(1, mem_core->di_uid, tag);
+		gid = TAGINO_GID(1, mem_core->di_gid, tag);
+		tag = TAGINO_TAG(1, tag);
+	}
 
 	INT_XLATE(buf_core->di_magic, mem_core->di_magic, dir, arch);
 	INT_XLATE(buf_core->di_mode, mem_core->di_mode, dir, arch);
 	INT_XLATE(buf_core->di_version,	mem_core->di_version, dir, arch);
 	INT_XLATE(buf_core->di_format, mem_core->di_format, dir, arch);
 	INT_XLATE(buf_core->di_onlink, mem_core->di_onlink, dir, arch);
-	INT_XLATE(buf_core->di_uid, mem_core->di_uid, dir, arch);
-	INT_XLATE(buf_core->di_gid, mem_core->di_gid, dir, arch);
+	INT_XLATE(buf_core->di_uid, uid, dir, arch);
+	INT_XLATE(buf_core->di_gid, gid, dir, arch);
+	INT_XLATE(buf_core->di_tag, tag, dir, arch);
 	INT_XLATE(buf_core->di_nlink, mem_core->di_nlink, dir, arch);
 	INT_XLATE(buf_core->di_projid, mem_core->di_projid, dir, arch);
 
 	if (dir > 0) {
+		/* FIXME: supposed to use superblock flag */
+		mem_core->di_uid = INOTAG_UID(1, uid, gid);
+		mem_core->di_gid = INOTAG_GID(1, uid, gid);
+		mem_core->di_tag = INOTAG_TAG(1, uid, gid, tag);
 		memcpy(mem_core->di_pad, buf_core->di_pad,
 			sizeof(buf_core->di_pad));
 	} else {
@@ -797,6 +813,10 @@ _xfs_dic2xflags(
 			flags |= XFS_XFLAG_PREALLOC;
 		if (di_flags & XFS_DIFLAG_IMMUTABLE)
 			flags |= XFS_XFLAG_IMMUTABLE;
+		if (di_flags & XFS_DIFLAG_IUNLINK)
+			flags |= XFS_XFLAG_IUNLINK;
+		if (di_flags & XFS_DIFLAG_BARRIER)
+			flags |= XFS_XFLAG_BARRIER;
 		if (di_flags & XFS_DIFLAG_APPEND)
 			flags |= XFS_XFLAG_APPEND;
 		if (di_flags & XFS_DIFLAG_SYNC)
@@ -1129,6 +1149,7 @@ xfs_ialloc(
 	ASSERT(ip->i_d.di_nlink == nlink);
 	ip->i_d.di_uid = current_fsuid(cr);
 	ip->i_d.di_gid = current_fsgid(cr);
+	ip->i_d.di_tag = current_fstag(cr, vp);
 	ip->i_d.di_projid = prid;
 	memset(&(ip->i_d.di_pad[0]), 0, sizeof(ip->i_d.di_pad));
 

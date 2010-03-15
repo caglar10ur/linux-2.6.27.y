@@ -103,6 +103,7 @@
 #include <linux/selection.h>
 
 #include <linux/kmod.h>
+#include <linux/vs_pid.h>
 
 #undef TTY_DEBUG_HANGUP
 
@@ -3049,13 +3050,15 @@ unlock:
 
 static int tiocgpgrp(struct tty_struct *tty, struct tty_struct *real_tty, pid_t __user *p)
 {
+	pid_t pgrp;
 	/*
 	 * (tty == real_tty) is a cheap way of
 	 * testing if the tty is NOT a master pty.
 	 */
 	if (tty == real_tty && current->signal->tty != real_tty)
 		return -ENOTTY;
-	return put_user(pid_nr(real_tty->pgrp), p);
+	pgrp = vx_map_pid(pid_nr(real_tty->pgrp));
+	return put_user(pgrp, p);
 }
 
 /**
@@ -3086,6 +3089,7 @@ static int tiocspgrp(struct tty_struct *tty, struct tty_struct *real_tty, pid_t 
 		return -ENOTTY;
 	if (get_user(pgrp_nr, p))
 		return -EFAULT;
+	pgrp_nr = vx_rmap_pid(pgrp_nr);
 	if (pgrp_nr < 0)
 		return -EINVAL;
 	rcu_read_lock();

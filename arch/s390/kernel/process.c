@@ -164,9 +164,9 @@ void show_regs(struct pt_regs *regs)
 	struct task_struct *tsk = current;
 
         printk("CPU:    %d    %s\n", task_thread_info(tsk)->cpu, print_tainted());
-        printk("Process %s (pid: %d, task: %p, ksp: %p)\n",
-	       current->comm, current->pid, (void *) tsk,
-	       (void *) tsk->thread.ksp);
+	printk("Process %s (pid: %d[#%u], task: %p, ksp: %p)\n",
+	       current->comm, current->pid, current->xid,
+	       (void *) tsk, (void *) tsk->thread.ksp);
 
 	show_registers(regs);
 	/* Show stack backtrace if pt_regs is from kernel mode */
@@ -197,7 +197,7 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 	regs.orig_gpr2 = -1;
 
 	/* Ok, create the new process.. */
-	return do_fork(flags | CLONE_VM | CLONE_UNTRACED,
+	return do_fork(flags | CLONE_VM | CLONE_UNTRACED | CLONE_KTHREAD,
 		       0, &regs, 0, NULL, NULL);
 }
 

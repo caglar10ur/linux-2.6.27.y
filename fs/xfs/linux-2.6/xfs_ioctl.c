@@ -1128,6 +1128,10 @@ xfs_di2lxflags(
 
 	if (di_flags & XFS_DIFLAG_IMMUTABLE)
 		flags |= FS_IMMUTABLE_FL;
+	if (di_flags & XFS_DIFLAG_IUNLINK)
+		flags |= FS_IUNLINK_FL;
+	if (di_flags & XFS_DIFLAG_BARRIER)
+		flags |= FS_BARRIER_FL;
 	if (di_flags & XFS_DIFLAG_APPEND)
 		flags |= FS_APPEND_FL;
 	if (di_flags & XFS_DIFLAG_SYNC)

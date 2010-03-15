@@ -17,6 +17,7 @@
 #include <linux/elf.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/vs_memory.h>
 
 #include <asm/cpufeature.h>
 #include <asm/msr.h>

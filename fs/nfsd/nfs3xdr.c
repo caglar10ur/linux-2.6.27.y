@@ -21,6 +21,7 @@
 #include <linux/sunrpc/svc.h>
 #include <linux/nfsd/nfsd.h>
 #include <linux/nfsd/xdr3.h>
+#include <linux/vs_tag.h>
 
 #define NFSDDBG_FACILITY		NFSDDBG_XDR
 
@@ -107,6 +108,8 @@ static __be32 *
 decode_sattr3(__be32 *p, struct iattr *iap)
 {
 	u32	tmp;
+	uid_t	uid = 0;
+	gid_t	gid = 0;
 
 	iap->ia_valid = 0;
 
@@ -116,12 +119,15 @@ decode_sattr3(__be32 *p, struct iattr *iap)
 	}
 	if (*p++) {
 		iap->ia_valid |= ATTR_UID;
-		iap->ia_uid = ntohl(*p++);
+		uid = ntohl(*p++);
 	}
 	if (*p++) {
 		iap->ia_valid |= ATTR_GID;
-		iap->ia_gid = ntohl(*p++);
+		gid = ntohl(*p++);
 	}
+	iap->ia_uid = INOTAG_UID(DX_TAG_NFSD, uid, gid);
+	iap->ia_gid = INOTAG_GID(DX_TAG_NFSD, uid, gid);
+	iap->ia_tag = INOTAG_TAG(DX_TAG_NFSD, uid, gid, 0);
 	if (*p++) {
 		u64	newsize;
 
@@ -180,8 +186,10 @@ encode_fattr3(struct svc_rqst *rqstp, __be32 *p, struct svc_fh *fhp,
 	*p++ = htonl(nfs3_ftypes[(stat->mode & S_IFMT) >> 12]);
 	*p++ = htonl((u32) stat->mode);
 	*p++ = htonl((u32) stat->nlink);
-	*p++ = htonl((u32) nfsd_ruid(rqstp, stat->uid));
-	*p++ = htonl((u32) nfsd_rgid(rqstp, stat->gid));
+	*p++ = htonl((u32) nfsd_ruid(rqstp,
+		TAGINO_UID(DX_TAG(dentry->d_inode), stat->uid, stat->tag)));
+	*p++ = htonl((u32) nfsd_rgid(rqstp,
+		TAGINO_GID(DX_TAG(dentry->d_inode), stat->gid, stat->tag)));
 	if (S_ISLNK(stat->mode) && stat->size > NFS3_MAXPATHLEN) {
 		p = xdr_encode_hyper(p, (u64) NFS3_MAXPATHLEN);
 	} else {

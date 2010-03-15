@@ -258,6 +258,7 @@
 #include <linux/cache.h>
 #include <linux/err.h>
 #include <linux/crypto.h>
+#include <linux/in.h>
 
 #include <net/icmp.h>
 #include <net/tcp.h>

@@ -18,6 +18,8 @@
 
 #include <linux/fs.h>
 #include <linux/quotaops.h>
+#include <linux/vs_dlimit.h>
+#include <linux/vs_tag.h>
 #include "jfs_incore.h"
 #include "jfs_inode.h"
 #include "jfs_filsys.h"
@@ -30,19 +32,47 @@ void jfs_set_inode_flags(struct inode *inode)
 {
 	unsigned int flags = JFS_IP(inode)->mode2;
 
-	inode->i_flags &= ~(S_IMMUTABLE | S_APPEND |
-		S_NOATIME | S_DIRSYNC | S_SYNC);
+	inode->i_flags &= ~(S_IMMUTABLE | S_IUNLINK | S_BARRIER |
+		S_SYNC | S_APPEND | S_NOATIME | S_DIRSYNC);
 
 	if (flags & JFS_IMMUTABLE_FL)
 		inode->i_flags |= S_IMMUTABLE;
+	if (flags & JFS_IUNLINK_FL)
+		inode->i_flags |= S_IUNLINK;
+	if (flags & JFS_BARRIER_FL)
+		inode->i_flags |= S_BARRIER;
+
+	if (flags & JFS_SYNC_FL)
+		inode->i_flags |= S_SYNC;
 	if (flags & JFS_APPEND_FL)
 		inode->i_flags |= S_APPEND;
 	if (flags & JFS_NOATIME_FL)
 		inode->i_flags |= S_NOATIME;
 	if (flags & JFS_DIRSYNC_FL)
 		inode->i_flags |= S_DIRSYNC;
-	if (flags & JFS_SYNC_FL)
-		inode->i_flags |= S_SYNC;
+}
+
+int jfs_sync_flags(struct inode *inode)
+{
+	unsigned int oldflags, newflags;
+
+	oldflags = JFS_IP(inode)->mode2;
+	newflags = oldflags & ~(JFS_IMMUTABLE_FL |
+		JFS_IUNLINK_FL | JFS_BARRIER_FL);
+
+	if (IS_IMMUTABLE(inode))
+		newflags |= JFS_IMMUTABLE_FL;
+	if (IS_IUNLINK(inode))
+		newflags |= JFS_IUNLINK_FL;
+	if (IS_BARRIER(inode))
+		newflags |= JFS_BARRIER_FL;
+
+	if (oldflags ^ newflags) {
+		JFS_IP(inode)->mode2 = newflags;
+		inode->i_ctime = CURRENT_TIME;
+		mark_inode_dirty(inode);
+	}
+	return 0;
 }
 
 void jfs_get_inode_flags(struct jfs_inode_info *jfs_ip)
@@ -108,10 +138,17 @@ struct inode *ialloc(struct inode *parent, umode_t mode)
 	jfs_inode->saved_uid = inode->i_uid;
 	jfs_inode->saved_gid = inode->i_gid;
 
+	inode->i_tag = dx_current_fstag(sb);
+	if (DLIMIT_ALLOC_INODE(inode)) {
+		iput(inode);
+		return ERR_PTR(-ENOSPC);
+	}
+
 	/*
 	 * Allocate inode to quota.
 	 */
 	if (DQUOT_ALLOC_INODE(inode)) {
+		DLIMIT_FREE_INODE(inode);
 		DQUOT_DROP(inode);
 		inode->i_flags |= S_NOQUOTA;
 		inode->i_nlink = 0;

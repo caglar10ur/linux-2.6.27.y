@@ -35,6 +35,7 @@
 #include <linux/compat.h>
 #include <linux/syscalls.h>
 #include <linux/kprobes.h>
+#include <linux/vs_pid.h>
 
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -638,7 +639,10 @@ static int set_one_prio(struct task_struct *p, int niceval, int error)
 		goto out;
 	}
 	if (niceval < task_nice(p) && !can_nice(p, niceval)) {
-		error = -EACCES;
+		if (vx_flags(VXF_IGNEG_NICE, 0))
+			error = 0;
+		else
+			error = -EACCES;
 		goto out;
 	}
 	no_nice = security_task_setnice(p, niceval);
@@ -686,6 +690,8 @@ asmlinkage long sys_setpriority(int which, int who, int niceval)
 			else
 				pgrp = task_pgrp(current);
 			do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+				if (!vx_check(p->xid, VS_ADMIN_P | VS_IDENT))
+					continue;
 				error = set_one_prio(p, niceval, error);
 			} while_each_pid_task(pgrp, PIDTYPE_PGID, p);
 			break;
@@ -694,7 +700,8 @@ asmlinkage long sys_setpriority(int which, int who, int niceval)
 			if (!who)
 				who = current->uid;
 			else
-				if ((who != current->uid) && !(user = find_user(who)))
+				if ((who != current->uid) &&
+					!(user = find_user(vx_current_xid(), who)))
 					goto out_unlock;	/* No processes for this user */
 
 			do_each_thread(g, p)
@@ -746,6 +753,8 @@ asmlinkage long sys_getpriority(int which, int who)
 			else
 				pgrp = task_pgrp(current);
 			do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+				if (!vx_check(p->xid, VS_ADMIN_P | VS_IDENT))
+					continue;
 				niceval = 20 - task_nice(p);
 				if (niceval > retval)
 					retval = niceval;
@@ -756,7 +765,8 @@ asmlinkage long sys_getpriority(int which, int who)
 			if (!who)
 				who = current->uid;
 			else
-				if ((who != current->uid) && !(user = find_user(who)))
+				if ((who != current->uid) &&
+					!(user = find_user(vx_current_xid(), who)))
 					goto out_unlock;	/* No processes for this user */
 
 			do_each_thread(g, p)
@@ -869,6 +879,9 @@ void kernel_power_off(void)
 	machine_power_off();
 }
 EXPORT_SYMBOL_GPL(kernel_power_off);
+
+long vs_reboot(unsigned int, void __user *);
+
 /*
  * Reboot system call: for obvious reasons only root may call it,
  * and even root needs to set up some magic numbers in the registers
@@ -898,6 +911,9 @@ asmlinkage long sys_reboot(int magic1, int magic2, unsigned int cmd, void __user
 	 */
 	if ((cmd == LINUX_REBOOT_CMD_POWER_OFF) && !pm_power_off)
 		cmd = LINUX_REBOOT_CMD_HALT;
+
+	if (!vx_check(0, VS_ADMIN|VS_WATCH))
+		return vs_reboot(cmd, arg);
 
 	lock_kernel();
 	switch (cmd) {
@@ -1078,7 +1094,7 @@ static int set_user(uid_t new_ruid, int dumpclear)
 {
 	struct user_struct *new_user;
 
-	new_user = alloc_uid(new_ruid);
+	new_user = alloc_uid(vx_current_xid(), new_ruid);
 	if (!new_user)
 		return -EAGAIN;
 
@@ -1432,14 +1448,17 @@ asmlinkage long sys_setpgid(pid_t pid, pid_t pgid)
 {
 	struct task_struct *p;
 	struct task_struct *group_leader = current->group_leader;
+	pid_t rpgid;
 	int err = -EINVAL;
 
 	if (!pid)
-		pid = group_leader->pid;
+		pid = vx_map_pid(group_leader->pid);
 	if (!pgid)
 		pgid = pid;
 	if (pgid < 0)
 		return -EINVAL;
+
+	rpgid = vx_rmap_pid(pgid);
 
 	/* From this point forward we keep holding onto the tasklist lock
 	 * so that our parent does not change from under us. -DaveM
@@ -1474,20 +1493,20 @@ asmlinkage long sys_setpgid(pid_t pid, pid_t pgid)
 
 	if (pgid != pid) {
 		struct task_struct *g =
-			find_task_by_pid_type(PIDTYPE_PGID, pgid);
+			find_task_by_pid_type(PIDTYPE_PGID, rpgid);
 
 		if (!g || task_session(g) != task_session(group_leader))
 			goto out;
 	}
 
-	err = security_task_setpgid(p, pgid);
+	err = security_task_setpgid(p, rpgid);
 	if (err)
 		goto out;
 
-	if (process_group(p) != pgid) {
+	if (process_group(p) != rpgid) {
 		detach_pid(p, PIDTYPE_PGID);
-		p->signal->pgrp = pgid;
-		attach_pid(p, PIDTYPE_PGID, find_pid(pgid));
+		p->signal->pgrp = rpgid;
+		attach_pid(p, PIDTYPE_PGID, find_pid(rpgid));
 	}
 
 	err = 0;
@@ -1500,7 +1519,7 @@ out:
 asmlinkage long sys_getpgid(pid_t pid)
 {
 	if (!pid)
-		return process_group(current);
+		return vx_rmap_pid(process_group(current));
 	else {
 		int retval;
 		struct task_struct *p;
@@ -1512,7 +1531,7 @@ asmlinkage long sys_getpgid(pid_t pid)
 		if (p) {
 			retval = security_task_getpgid(p);
 			if (!retval)
-				retval = process_group(p);
+				retval = vx_rmap_pid(process_group(p));
 		}
 		read_unlock(&tasklist_lock);
 		return retval;
@@ -1863,7 +1882,7 @@ asmlinkage long sys_sethostname(char __user *name, int len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!vx_capable(CAP_SYS_ADMIN, VXC_SET_UTSNAME))
 		return -EPERM;
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;
@@ -1908,7 +1927,7 @@ asmlinkage long sys_setdomainname(char __user *name, int len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!vx_capable(CAP_SYS_ADMIN, VXC_SET_UTSNAME))
 		return -EPERM;
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;
@@ -1975,7 +1994,7 @@ asmlinkage long sys_setrlimit(unsigned int resource, struct rlimit __user *rlim)
 		return -EINVAL;
 	old_rlim = current->signal->rlim + resource;
 	if ((new_rlim.rlim_max > old_rlim->rlim_max) &&
-	    !capable(CAP_SYS_RESOURCE))
+	    !vx_capable(CAP_SYS_RESOURCE, VXC_SET_RLIMIT))
 		return -EPERM;
 	if (resource == RLIMIT_NOFILE && new_rlim.rlim_max > NR_OPEN)
 		return -EPERM;

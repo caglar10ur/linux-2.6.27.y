@@ -498,6 +498,9 @@ static int copy_pte_range(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	int progress = 0;
 	int rss[2];
 
+	if (!vx_rss_avail(dst_mm, ((end - addr)/PAGE_SIZE + 1)))
+		return -ENOMEM;
+
 again:
 	rss[1] = rss[0] = 0;
 	dst_pte = pte_alloc_map_lock(dst_mm, dst_pmd, addr, &dst_ptl);
@@ -2159,6 +2162,11 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		count_vm_event(PGMAJFAULT);
 	}
 
+	if (!vx_rss_avail(mm, 1)) {
+		ret = VM_FAULT_OOM;
+		goto out;
+	}
+
 	delayacct_clear_flag(DELAYACCT_PF_SWAPIN);
 	mark_page_accessed(page);
 	lock_page(page);
@@ -2231,6 +2239,8 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		/* Allocate our own private page. */
 		pte_unmap(page_table);
 
+		if (!vx_rss_avail(mm, 1))
+			goto oom;
 		if (unlikely(anon_vma_prepare(vma)))
 			goto oom;
 		page = alloc_zeroed_user_highpage(vma, address);
@@ -2303,6 +2313,9 @@ static int do_no_page(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	pte_unmap(page_table);
 	BUG_ON(vma->vm_flags & VM_PFNMAP);
+
+	if (!vx_rss_avail(mm, 1))
+		return VM_FAULT_OOM;
 
 	if (vma->vm_file) {
 		mapping = vma->vm_file->f_mapping;
@@ -2529,6 +2542,7 @@ static inline int handle_pte_fault(struct mm_struct *mm,
 {
 	pte_t entry;
 	spinlock_t *ptl;
+	int ret, type = VXPT_UNKNOWN;
 
 	entry = *pte;
 	if (!pte_present(entry)) {
@@ -2557,9 +2571,12 @@ static inline int handle_pte_fault(struct mm_struct *mm,
 	if (unlikely(!pte_same(*pte, entry)))
 		goto unlock;
 	if (write_access) {
-		if (!pte_write(entry))
-			return do_wp_page(mm, vma, address,
+		if (!pte_write(entry)) {
+			ret = do_wp_page(mm, vma, address,
 					pte, pmd, ptl, entry);
+			type = VXPT_WRITE;
+			goto out;
+		}
 		entry = pte_mkdirty(entry);
 	}
 	entry = pte_mkyoung(entry);
@@ -2578,7 +2595,10 @@ static inline int handle_pte_fault(struct mm_struct *mm,
 	}
 unlock:
 	pte_unmap_unlock(pte, ptl);
-	return VM_FAULT_MINOR;
+	ret = VM_FAULT_MINOR;
+out:
+	vx_page_fault(mm, vma, type, ret);
+	return ret;
 }
 
 /*

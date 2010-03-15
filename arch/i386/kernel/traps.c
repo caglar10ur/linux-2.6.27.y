@@ -56,6 +56,8 @@
 #include <asm/stacktrace.h>
 
 #include <linux/module.h>
+#include <linux/vs_context.h>
+#include <linux/vserver/history.h>
 
 #include "mach_traps.h"
 
@@ -303,8 +305,8 @@ void show_registers(struct pt_regs *regs)
 		regs->esi, regs->edi, regs->ebp, esp);
 	printk(KERN_EMERG "ds: %04x   es: %04x   fs: %04x  gs: %04x  ss: %04x\n",
 	       regs->xds & 0xffff, regs->xes & 0xffff, regs->xfs & 0xffff, gs, ss);
-	printk(KERN_EMERG "Process %.*s (pid: %d, ti=%p task=%p task.ti=%p)",
-		TASK_COMM_LEN, current->comm, current->pid,
+	printk(KERN_EMERG "Process %.*s (pid: %d[#%u], ti=%p task=%p task.ti=%p)",
+		TASK_COMM_LEN, current->comm, current->pid, current->xid,
 		current_thread_info(), current, task_thread_info(current));
 	/*
 	 * When in-kernel, we also print out the stack and code at the
@@ -375,6 +377,8 @@ void die(const char * str, struct pt_regs * regs, long err)
 
 	oops_enter();
 
+	vxh_throw_oops();
+
 	if (die.lock_owner != raw_smp_processor_id()) {
 		console_verbose();
 		spin_lock_irqsave(&die.lock, flags);
@@ -412,9 +416,9 @@ void die(const char * str, struct pt_regs * regs, long err)
 		if (nl)
 			printk("\n");
 		if (notify_die(DIE_OOPS, str, regs, err,
-					current->thread.trap_no, SIGSEGV) !=
-				NOTIFY_STOP) {
+			current->thread.trap_no, SIGSEGV) != NOTIFY_STOP) {
 			show_registers(regs);
+			vxh_dump_history();
 			/* Executive summary in case the oops scrolled away */
 			esp = (unsigned long) (&regs->esp);
 			savesegment(ss, ss);

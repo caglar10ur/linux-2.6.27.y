@@ -13,6 +13,7 @@
 #include <linux/reiserfs_fs_sb.h>
 #include <linux/reiserfs_fs_i.h>
 #include <linux/quotaops.h>
+#include <linux/vs_dlimit.h>
 
 #define PREALLOCATION_SIZE 9
 
@@ -425,8 +426,10 @@ static void _reiserfs_free_block(struct reiserfs_transaction_handle *th,
 	set_sb_free_blocks(rs, sb_free_blocks(rs) + 1);
 
 	journal_mark_dirty(th, s, sbh);
-	if (for_unformatted)
+	if (for_unformatted) {
+		DLIMIT_FREE_BLOCK(inode, 1);
 		DQUOT_FREE_BLOCK_NODIRTY(inode, 1);
+	}
 }
 
 void reiserfs_free_block(struct reiserfs_transaction_handle *th,
@@ -1034,6 +1037,7 @@ static inline int blocknrs_and_prealloc_arrays_from_search_start
 	b_blocknr_t finish = SB_BLOCK_COUNT(s) - 1;
 	int passno = 0;
 	int nr_allocated = 0;
+	int blocks;
 
 	determine_prealloc_size(hint);
 	if (!hint->formatted_node) {
@@ -1043,19 +1047,30 @@ static inline int blocknrs_and_prealloc_arrays_from_search_start
 			       "reiserquota: allocating %d blocks id=%u",
 			       amount_needed, hint->inode->i_uid);
 #endif
-		quota_ret =
-		    DQUOT_ALLOC_BLOCK_NODIRTY(hint->inode, amount_needed);
-		if (quota_ret)	/* Quota exceeded? */
+		quota_ret = DQUOT_ALLOC_BLOCK_NODIRTY(hint->inode,
+			amount_needed);
+		if (quota_ret)
 			return QUOTA_EXCEEDED;
+		if (DLIMIT_ALLOC_BLOCK(hint->inode, amount_needed)) {
+			DQUOT_FREE_BLOCK_NODIRTY(hint->inode,
+				amount_needed);
+			return NO_DISK_SPACE;
+		}
+
 		if (hint->preallocate && hint->prealloc_size) {
 #ifdef REISERQUOTA_DEBUG
 			reiserfs_debug(s, REISERFS_DEBUG_CODE,
 				       "reiserquota: allocating (prealloc) %d blocks id=%u",
 				       hint->prealloc_size, hint->inode->i_uid);
 #endif
-			quota_ret =
-			    DQUOT_PREALLOC_BLOCK_NODIRTY(hint->inode,
-							 hint->prealloc_size);
+			quota_ret = DQUOT_PREALLOC_BLOCK_NODIRTY(hint->inode,
+				hint->prealloc_size);
+			if (!quota_ret &&
+				DLIMIT_ALLOC_BLOCK(hint->inode, hint->prealloc_size)) {
+				DQUOT_FREE_BLOCK_NODIRTY(hint->inode,
+					hint->prealloc_size);
+				quota_ret = 1;
+			}
 			if (quota_ret)
 				hint->preallocate = hint->prealloc_size = 0;
 		}
@@ -1087,7 +1102,10 @@ static inline int blocknrs_and_prealloc_arrays_from_search_start
 					       nr_allocated,
 					       hint->inode->i_uid);
 #endif
-				DQUOT_FREE_BLOCK_NODIRTY(hint->inode, amount_needed + hint->prealloc_size - nr_allocated);	/* Free not allocated blocks */
+				/* Free not allocated blocks */
+				blocks = amount_needed + hint->prealloc_size - nr_allocated;
+				DLIMIT_FREE_BLOCK(hint->inode, blocks);
+				DQUOT_FREE_BLOCK_NODIRTY(hint->inode, blocks);
 			}
 			while (nr_allocated--)
 				reiserfs_free_block(hint->th, hint->inode,
@@ -1118,10 +1136,10 @@ static inline int blocknrs_and_prealloc_arrays_from_search_start
 			       REISERFS_I(hint->inode)->i_prealloc_count,
 			       hint->inode->i_uid);
 #endif
-		DQUOT_FREE_BLOCK_NODIRTY(hint->inode, amount_needed +
-					 hint->prealloc_size - nr_allocated -
-					 REISERFS_I(hint->inode)->
-					 i_prealloc_count);
+		blocks = amount_needed + hint->prealloc_size - nr_allocated -
+			REISERFS_I(hint->inode)->i_prealloc_count;
+		DLIMIT_FREE_BLOCK(hint->inode, blocks);
+		DQUOT_FREE_BLOCK_NODIRTY(hint->inode, blocks);
 	}
 
 	return CARRY_ON;

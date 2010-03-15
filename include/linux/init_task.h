@@ -169,6 +169,10 @@ extern struct group_info init_groups;
 	},								\
 	INIT_TRACE_IRQFLAGS						\
 	INIT_LOCKDEP							\
+	.xid		= 0,						\
+	.vx_info	= NULL,						\
+	.nid		= 0,						\
+	.nx_info	= NULL,						\
 }
 
 

@@ -48,6 +48,7 @@
 #include <linux/rcupdate.h>
 #include <linux/module.h>
 #include <linux/kallsyms.h>
+#include <linux/vs_memory.h>
 
 #include <asm/tlbflush.h>
 

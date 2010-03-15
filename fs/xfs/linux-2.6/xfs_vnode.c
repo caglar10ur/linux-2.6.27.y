@@ -119,6 +119,7 @@ vn_revalidate_core(
 	inode->i_nlink	    = vap->va_nlink;
 	inode->i_uid	    = vap->va_uid;
 	inode->i_gid	    = vap->va_gid;
+	inode->i_tag	    = vap->va_tag;
 	inode->i_blocks	    = vap->va_nblocks;
 	inode->i_mtime	    = vap->va_mtime;
 	inode->i_ctime	    = vap->va_ctime;
@@ -126,6 +127,14 @@ vn_revalidate_core(
 		inode->i_flags |= S_IMMUTABLE;
 	else
 		inode->i_flags &= ~S_IMMUTABLE;
+	if (vap->va_xflags & XFS_XFLAG_IUNLINK)
+		inode->i_flags |= S_IUNLINK;
+	else
+		inode->i_flags &= ~S_IUNLINK;
+	if (vap->va_xflags & XFS_XFLAG_BARRIER)
+		inode->i_flags |= S_BARRIER;
+	else
+		inode->i_flags &= ~S_BARRIER;
 	if (vap->va_xflags & XFS_XFLAG_APPEND)
 		inode->i_flags |= S_APPEND;
 	else

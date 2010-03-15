@@ -125,6 +125,10 @@
 #include <linux/ipsec.h>
 
 #include <linux/filter.h>
+#include <linux/vs_socket.h>
+#include <linux/vs_limit.h>
+#include <linux/vs_context.h>
+#include <linux/vs_network.h>
 
 #ifdef CONFIG_INET
 #include <net/tcp.h>
@@ -812,6 +816,9 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 	case SO_PEERSEC:
 		return security_socket_getpeersec_stream(sock, optval, optlen, len);
 
+		case SO_PEERTAG:
+			return vx_socket_peer_tag(sock, level, optval, optlen, len);
+
 	default:
 		return -ENOPROTOOPT;
 	}
@@ -869,6 +876,8 @@ struct sock *sk_alloc(int family, gfp_t priority,
 			sk->sk_prot = sk->sk_prot_creator = prot;
 			sock_lock_init(sk);
 		}
+		sock_vx_init(sk);
+		sock_nx_init(sk);
 
 		if (security_sk_alloc(sk, family, priority))
 			goto out_free;
@@ -907,6 +916,11 @@ void sk_free(struct sock *sk)
 		       __FUNCTION__, atomic_read(&sk->sk_omem_alloc));
 
 	security_sk_free(sk);
+	vx_sock_dec(sk);
+	clr_vx_info(&sk->sk_vx_info);
+	sk->sk_xid = -1;
+	clr_nx_info(&sk->sk_nx_info);
+	sk->sk_nid = -1;
 	if (sk->sk_prot_creator->slab != NULL)
 		kmem_cache_free(sk->sk_prot_creator->slab, sk);
 	else
@@ -924,6 +938,8 @@ struct sock *sk_clone(const struct sock *sk, const gfp_t priority)
 		sock_copy(newsk, sk);
 
 		/* SANITY */
+		sock_vx_init(newsk);
+		sock_nx_init(newsk);
 		sk_node_init(&newsk->sk_node);
 		sock_lock_init(newsk);
 		bh_lock_sock(newsk);
@@ -968,6 +984,12 @@ struct sock *sk_clone(const struct sock *sk, const gfp_t priority)
 		newsk->sk_err	   = 0;
 		newsk->sk_priority = 0;
 		atomic_set(&newsk->sk_refcnt, 2);
+
+		set_vx_info(&newsk->sk_vx_info, sk->sk_vx_info);
+		newsk->sk_xid = sk->sk_xid;
+		vx_sock_inc(newsk);
+		set_nx_info(&newsk->sk_nx_info, sk->sk_nx_info);
+		newsk->sk_nid = sk->sk_nid;
 
 		/*
 		 * Increment the counter in the same struct proto as the master
@@ -1551,6 +1573,11 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 
 	sk->sk_stamp = ktime_set(-1L, -1L);
 
+	set_vx_info(&sk->sk_vx_info, current->vx_info);
+	sk->sk_xid = vx_current_xid();
+	vx_sock_inc(sk);
+	set_nx_info(&sk->sk_nx_info, current->nx_info);
+	sk->sk_nid = nx_current_nid();
 	atomic_set(&sk->sk_refcnt, 1);
 }
 

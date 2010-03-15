@@ -17,6 +17,8 @@
 #include <linux/backing-dev.h>
 #include <linux/buffer_head.h>
 #include <linux/random.h>
+#include <linux/vs_dlimit.h>
+#include <linux/vs_tag.h>
 #include "ext2.h"
 #include "xattr.h"
 #include "acl.h"
@@ -125,6 +127,7 @@ void ext2_free_inode (struct inode * inode)
 		ext2_xattr_delete_inode(inode);
 	    	DQUOT_FREE_INODE(inode);
 		DQUOT_DROP(inode);
+		DLIMIT_FREE_INODE(inode);
 	}
 
 	es = EXT2_SB(sb)->s_es;
@@ -464,6 +467,11 @@ struct inode *ext2_new_inode(struct inode *dir, int mode)
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 
+	inode->i_tag = dx_current_fstag(sb);
+	if (DLIMIT_ALLOC_INODE(inode)) {
+		err = -ENOSPC;
+		goto fail_dlim;
+	}
 	ei = EXT2_I(inode);
 	sbi = EXT2_SB(sb);
 	es = sbi->s_es;
@@ -577,7 +585,8 @@ got:
 	inode->i_blocks = 0;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME_SEC;
 	memset(ei->i_data, 0, sizeof(ei->i_data));
-	ei->i_flags = EXT2_I(dir)->i_flags & ~EXT2_BTREE_FL;
+	ei->i_flags = EXT2_I(dir)->i_flags &
+		~(EXT2_BTREE_FL|EXT2_IUNLINK_FL|EXT2_BARRIER_FL);
 	if (S_ISLNK(mode))
 		ei->i_flags &= ~(EXT2_IMMUTABLE_FL|EXT2_APPEND_FL);
 	/* dirsync is only applied to directories */
@@ -625,12 +634,15 @@ fail_free_drop:
 
 fail_drop:
 	DQUOT_DROP(inode);
+	DLIMIT_FREE_INODE(inode);
 	inode->i_flags |= S_NOQUOTA;
 	inode->i_nlink = 0;
 	iput(inode);
 	return ERR_PTR(err);
 
 fail:
+	DLIMIT_FREE_INODE(inode);
+fail_dlim:
 	make_bad_inode(inode);
 	iput(inode);
 	return ERR_PTR(err);

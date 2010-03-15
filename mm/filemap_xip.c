@@ -14,6 +14,7 @@
 #include <linux/uio.h>
 #include <linux/rmap.h>
 #include <linux/sched.h>
+#include <linux/vs_memory.h>
 #include <asm/tlbflush.h>
 #include "filemap.h"
 

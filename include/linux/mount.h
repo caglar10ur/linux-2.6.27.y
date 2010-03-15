@@ -28,12 +28,19 @@ struct mnt_namespace;
 #define MNT_NOATIME	0x08
 #define MNT_NODIRATIME	0x10
 #define MNT_RELATIME	0x20
+#define MNT_RDONLY	0x40
+
+#define MNT_IS_RDONLY(m)	((m) && ((m)->mnt_flags & MNT_RDONLY))
 
 #define MNT_SHRINKABLE	0x100
 
 #define MNT_SHARED	0x1000	/* if the vfsmount is a shared mount */
 #define MNT_UNBINDABLE	0x2000	/* if the vfsmount is a unbindable mount */
 #define MNT_PNODE_MASK	0x3000	/* propagation flag mask */
+
+#define MNT_TAGID	0x10000
+#define MNT_NOTAG	0x20000
+#define MNT_NOTAGCHECK	0x40000
 
 struct vfsmount {
 	struct list_head mnt_hash;
@@ -61,6 +68,7 @@ struct vfsmount {
 	atomic_t mnt_count;
 	int mnt_expiry_mark;		/* true if marked for expiry */
 	int mnt_pinned;
+	tag_t mnt_tag;			/* tagging used for vfsmount */
 };
 
 static inline struct vfsmount *mntget(struct vfsmount *mnt)
