@@ -122,6 +122,7 @@ static struct inode *alloc_inode(struct super_block *sb)
 		inode->i_fop = &empty_fops;
 		inode->i_nlink = 1;
 		atomic_set(&inode->i_writecount, 0);
+		mutex_init(&inode->i_mutex);
 		inode->i_size = 0;
 		inode->i_blocks = 0;
 		inode->i_bytes = 0;
@@ -1102,6 +1103,7 @@ static inline void iput_final(struct inode *inode)
 
 	if (op && op->drop_inode)
 		drop = op->drop_inode;
+	BUG_ON(atomic_read(&inode->i_mutex.count)!=1);
 	drop(inode);
 }
 
