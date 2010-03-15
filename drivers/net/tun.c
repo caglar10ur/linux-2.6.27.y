@@ -38,10 +38,11 @@
  *    Modifications for 2.3.99-pre5 kernel.
  */
 
-#define DRV_NAME	"tun"
+#define DRV_NAME	"stdtun"
 #define DRV_VERSION	"1.6"
 #define DRV_DESCRIPTION	"Universal TUN/TAP device driver"
 #define DRV_COPYRIGHT	"(C) 1999-2004 Max Krasnyansky <maxk@qualcomm.com>"
+#define TUN_MINOR_HACK 255
 
 #include <linux/module.h>
 #include <linux/errno.h>
@@ -791,8 +792,8 @@ static const struct file_operations tun_fops = {
 };
 
 static struct miscdevice tun_miscdev = {
-	.minor = TUN_MINOR,
-	.name = "tun",
+	.minor = TUN_MINOR_HACK,
+	.name = "stdtun",
 	.fops = &tun_fops,
 };
 
@@ -890,7 +891,7 @@ static int __init tun_init(void)
 
 	ret = misc_register(&tun_miscdev);
 	if (ret)
-		printk(KERN_ERR "tun: Can't register misc device %d\n", TUN_MINOR);
+		printk(KERN_ERR "tun: Can't register misc device %d\n", TUN_MINOR_HACK);
 	return ret;
 }
 
@@ -914,4 +915,4 @@ module_exit(tun_cleanup);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_COPYRIGHT);
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_MISCDEV(TUN_MINOR);
+MODULE_ALIAS_MISCDEV(TUN_MINOR_HACK);
