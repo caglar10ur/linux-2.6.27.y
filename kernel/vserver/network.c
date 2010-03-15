@@ -390,7 +390,7 @@ int get_nid_list(int index, unsigned int *nids, int size)
 	int hindex, nr_nids = 0;
 
 	/* only show current and children */
-	if (!nx_check(0, VS_ADMIN | VS_WATCH)) {
+	if (!nx_check(0, VS_ADMIN | VS_WATCH) && vx_flags(VXF_HIDE_VINFO, 0)) {
 		if (index > 0)
 			return 0;
 		nids[nr_nids] = nx_current_nid();
