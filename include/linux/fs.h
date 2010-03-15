@@ -22,7 +22,7 @@
 /* Fixed constants first: */
 #undef NR_OPEN
 #define NR_OPEN (1024*1024)	/* Absolute upper limit on fd num */
-#define INR_OPEN 1024		/* Initial setting for nfile rlimits */
+#define INR_OPEN 4096		/* Initial setting for nfile rlimits */
 
 #define BLOCK_SIZE_BITS 10
 #define BLOCK_SIZE (1<<BLOCK_SIZE_BITS)
