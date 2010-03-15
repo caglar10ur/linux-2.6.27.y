@@ -302,6 +302,7 @@ struct sk_buff {
 #endif
 
 	__u32			mark;
+#define skb_tag			mark
 
 	sk_buff_data_t		transport_header;
 	sk_buff_data_t		network_header;

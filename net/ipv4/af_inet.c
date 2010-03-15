@@ -178,6 +178,8 @@ static int inet_autobind(struct sock *sk)
 			return -EAGAIN;
 		}
 		inet->sport = htons(inet->num);
+		sk->sk_xid = vx_current_xid();
+		if (!in_interrupt()) sk->sk_nid = nx_current_nid(); else sk->sk_nid=0;
 	}
 	release_sock(sk);
 	return 0;
