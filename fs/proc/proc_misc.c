@@ -779,6 +779,34 @@ static const struct file_operations proc_sysrq_trigger_operations = {
 };
 #endif
 
+extern char debug_630_dumped[4087];
+static int show_debug_630(struct seq_file *p, void *v)
+{
+	seq_printf(p, "%s\n", debug_630_dumped);
+	return 0;
+}
+
+static int debug_630_open(struct inode *inode, struct file *filp)
+{
+	int res;
+	struct seq_file *m;
+
+	res = single_open(filp, show_debug_630, NULL);
+	if (!res) {
+		m = filp->private_data;
+		m->buf = kmalloc(4096, GFP_KERNEL);
+		m->size = 4096;
+	}
+	return res;
+}
+
+static const struct file_operations proc_debug_630_operations = {
+	.open = debug_630_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
 struct proc_dir_entry *proc_root_kcore;
 
 void create_seq_entry(char *name, mode_t mode, const struct file_operations *f)
@@ -871,4 +899,6 @@ void __init proc_misc_init(void)
 			entry->proc_fops = &proc_sysrq_trigger_operations;
 	}
 #endif
+
+	create_seq_entry("debug_630", 0, &proc_debug_630_operations);
 }

@@ -3649,6 +3649,12 @@ struct event_spec {
 };
 #endif
 
+/* Bypass the vx_unhold infinite loop */
+unsigned int merry;
+char debug_630_dumped[4087] = { [0] = '\0' };
+EXPORT_SYMBOL(merry);
+EXPORT_SYMBOL(debug_630_dumped);
+
 asmlinkage void __sched schedule(void)
 {
 	struct task_struct *prev, *next;
@@ -3739,14 +3745,43 @@ need_resched_nonpreemptible:
 
 	cpu = smp_processor_id();
 	vx_set_rq_time(rq, jiffies);
+
+	merry=0;
 try_unhold:
 	vx_try_unhold(rq, cpu);
 pick_next:
 
 	if (unlikely(!rq->nr_running)) {
 		/* can we skip idle time? */
-		if (vx_try_skip(rq, cpu))
+		if (vx_try_skip(rq, cpu) && merry<10) {
+			merry++;
 			goto try_unhold;
+		}
+		else if (merry==10 && !*debug_630_dumped) {
+			char *ptr = debug_630_dumped;
+#define append(...)	ptr += snprintf(ptr, ((debug_630_dumped + sizeof(debug_630_dumped)) - ptr), __VA_ARGS__)
+
+			if (list_empty(&rq->hold_queue))
+				append("hold queue is empty\n");
+			else {
+				struct list_head *l, *n;
+				append("rq->norm_time = %lu, rq->idle_time = %lu, rq->idle_skip = %d\n",
+					rq->norm_time, rq->idle_time, rq->idle_skip);
+				list_for_each_safe(l, n, &rq->hold_queue) {
+					struct task_struct *p;
+					struct _vx_sched_pc *sched_pc;
+					struct vx_info *vxi;
+
+					p = list_entry(l, struct task_struct, run_list);
+					vxi = p->vx_info;
+					sched_pc = &vx_per_cpu(vxi, sched_pc, cpu);
+
+					append("%u: sched_pc->norm_time = %lu, sched_pc->idle_time = %lu\n", vxi->vx_id,
+						sched_pc->norm_time, sched_pc->idle_time);
+				}
+			}
+			*ptr = '\0';
+		}
 
 		idle_balance(cpu, rq);
 		if (!rq->nr_running) {
