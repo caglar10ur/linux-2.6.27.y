@@ -36,6 +36,9 @@ target(struct sk_buff **pskb,
 	const struct xt_classify_target_info *clinfo = targinfo;
 
 	(*pskb)->priority = clinfo->priority;
+	if (clinfo->add_mark)
+		(*pskb)->priority += (*pskb)->mark;
+
 	return XT_CONTINUE;
 }
 

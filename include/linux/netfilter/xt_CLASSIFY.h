@@ -3,6 +3,7 @@
 
 struct xt_classify_target_info {
 	u_int32_t priority;
+	u_int8_t add_mark;
 };
 
 #endif /*_XT_CLASSIFY_H */
