@@ -12,6 +12,7 @@ obj-$(CONFIG_EHEA) += ehea/
 obj-$(CONFIG_BONDING) += bonding/
 obj-$(CONFIG_ATL1) += atl1/
 obj-$(CONFIG_GIANFAR) += gianfar_driver.o
+obj-$(CONFIG_IGB) += igb/
 
 gianfar_driver-objs := gianfar.o \
 		gianfar_ethtool.o \
