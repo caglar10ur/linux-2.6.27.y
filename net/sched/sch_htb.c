@@ -71,7 +71,7 @@
 #define HTB_HSIZE 16		/* classid hash size */
 #define HTB_EWMAC 2		/* rate average over HTB_EWMAC*HTB_HSIZE sec */
 #define HTB_RATECM 1		/* whether to use rate computer */
-#define HTB_HYSTERESIS 1	/* whether to use mode hysteresis for speedup */
+#define HTB_HYSTERESIS 0	/* whether to use mode hysteresis for speedup */
 #define HTB_VER 0x30011		/* major must be matched with number suplied by TC as version */
 
 #if HTB_VER >> 16 != TC_HTB_PROTOVER
@@ -153,15 +153,12 @@ struct htb_class {
 				/* of un.leaf originals should be done. */
 };
 
-/* TODO: maybe compute rate when size is too large .. or drop ? */
 static inline long L2T(struct htb_class *cl, struct qdisc_rate_table *rate,
 			   int size)
 {
 	int slot = size >> rate->rate.cell_log;
-	if (slot > 255) {
-		cl->xstats.giants++;
-		slot = 255;
-	}
+	if (slot > 255)
+		return (rate->data[255]*(slot >> 8) + rate->data[slot & 0xFF]);
 	return rate->data[slot];
 }
 
@@ -634,13 +631,13 @@ static int htb_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 		cl->qstats.drops++;
 		return NET_XMIT_DROP;
 	} else {
-		cl->bstats.packets++;
+		cl->bstats.packets += skb_is_gso(skb) ? skb_shinfo(skb)->gso_segs : 1;
 		cl->bstats.bytes += skb->len;
 		htb_activate(q, cl);
 	}
 
 	sch->q.qlen++;
-	sch->bstats.packets++;
+	sch->bstats.packets += skb_is_gso(skb) ? skb_shinfo(skb)->gso_segs : 1;
 	sch->bstats.bytes += skb->len;
 	return NET_XMIT_SUCCESS;
 }
@@ -717,8 +714,9 @@ static void htb_rate_timer(unsigned long arg)
  * In such case we remove class from event queue first.
  */
 static void htb_charge_class(struct htb_sched *q, struct htb_class *cl,
-			     int level, int bytes)
+			     int level, struct sk_buff *skb)
 {
+	int bytes = skb->len;
 	long toks, diff;
 	enum htb_cmode old_mode;
 
@@ -759,7 +757,8 @@ static void htb_charge_class(struct htb_sched *q, struct htb_class *cl,
 		/* update byte stats except for leaves which are already updated */
 		if (cl->level) {
 			cl->bstats.bytes += bytes;
-			cl->bstats.packets++;
+			cl->bstats.packets +=
+				skb_is_gso(skb) ? skb_shinfo(skb)->gso_segs : 1;
 		}
 		cl = cl->parent;
 	}
@@ -943,7 +942,7 @@ next:
 		   gives us slightly better performance */
 		if (!cl->un.leaf.q->q.qlen)
 			htb_deactivate(q, cl);
-		htb_charge_class(q, cl, level, skb->len);
+		htb_charge_class(q, cl, level, skb);
 	}
 	return skb;
 }
