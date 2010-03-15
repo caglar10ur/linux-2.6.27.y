@@ -64,4 +64,12 @@ extern int sysctl_icmp_errors_use_inbound_ifaddr;
 extern int sysctl_icmp_ratelimit;
 extern int sysctl_icmp_ratemask;
 
+#ifdef CONFIG_ICMP_IPOD
+extern int sysctl_icmp_ipod_version;
+extern int sysctl_icmp_ipod_enabled;
+extern u32 sysctl_icmp_ipod_host;
+extern u32 sysctl_icmp_ipod_mask;
+extern char sysctl_icmp_ipod_key[32+1];
+#endif
+
 #endif	/* _ICMP_H */
