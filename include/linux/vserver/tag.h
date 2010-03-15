@@ -125,10 +125,11 @@ struct peer_tag {
 	int32_t nid;
 };
 
-#define dx_notagcheck(nd) \
-	((nd) && (nd)->mnt && ((nd)->mnt->mnt_flags & MNT_NOTAGCHECK))
+#define dx_notagcheck(sb) \
+	((sb) && ((sb)->s_flags & MS_NOTAGCHECK))
 
-int dx_parse_tag(char *string, tag_t *tag, int remove);
+int dx_parse_tag(char *string, tag_t *tag, int remove, int *mnt_flags,
+	         unsigned long *flags);
 
 #ifdef	CONFIG_PROPAGATE
 

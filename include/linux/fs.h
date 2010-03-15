@@ -60,6 +60,7 @@ extern int dir_notify_enable;
 #define MAY_WRITE 2
 #define MAY_READ 4
 #define MAY_APPEND 8
+#define MAY_ACCESS 16
 
 #define FMODE_READ 1
 #define FMODE_WRITE 2
@@ -125,6 +126,7 @@ extern int dir_notify_enable;
 #define MS_RELATIME	(1<<21)	/* Update atime relative to mtime/ctime. */
 #define MS_TAGGED	(1<<24) /* use generic inode tagging */
 #define MS_TAGID	(1<<25) /* use specific tag for this mount */
+#define MS_NOTAGCHECK	(1<<26) /* don't check tags */
 #define MS_ACTIVE	(1<<30)
 #define MS_NOUSER	(1<<31)
 

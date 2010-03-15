@@ -1470,9 +1470,7 @@ long do_mount(char *dev_name, char *dir_name, char *type_page,
 	if (data_page)
 		((char *)data_page)[PAGE_SIZE - 1] = 0;
 
-	retval = dx_parse_tag(data_page, &tag, 1);
-	if (retval) {
-		mnt_flags |= retval;
+	if (dx_parse_tag(data_page, &tag, 1, &mnt_flags, &flags)) {
 		/* FIXME: bind and re-mounts get the tag flag? */
 		if (flags & (MS_BIND|MS_REMOUNT))
 			flags |= MS_TAGID;

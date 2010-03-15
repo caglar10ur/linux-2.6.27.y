@@ -73,6 +73,8 @@
 
 #define VXC_KTHREAD		0x01000000
 
+#define VXC_PROC_WRITE		0x80000000ULL
+
 
 #ifdef	__KERNEL__
 
