@@ -97,6 +97,8 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/stat.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
 #include <linux/if_bridge.h>
 #include <net/dst.h>
 #include <net/pkt_sched.h>
@@ -1131,7 +1133,7 @@ static void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 		if ((ptype->dev == dev || !ptype->dev) &&
 		    (ptype->af_packet_priv == NULL ||
 		     (struct sock *)ptype->af_packet_priv != skb->sk)) {
-			struct sk_buff *skb2= skb_clone(skb, GFP_ATOMIC);
+			struct sk_buff *skb2 = skb_clone(skb, GFP_ATOMIC);
 			if (!skb2)
 				break;
 
@@ -1803,6 +1805,7 @@ static inline struct sk_buff *handle_bridge(struct sk_buff *skb,
  * the ingress scheduler, you just cant add policies on ingress.
  *
  */
+
 static int ing_filter(struct sk_buff *skb)
 {
 	struct Qdisc *q;
@@ -1832,12 +1835,19 @@ static int ing_filter(struct sk_buff *skb)
 }
 #endif
 
+/* The code already makes the assumption that packet handlers run
+ * sequentially on the same CPU. -Sapan */
+DEFINE_PER_CPU(int, sknid_elevator) = 0;
+
 int netif_receive_skb(struct sk_buff *skb)
 {
 	struct packet_type *ptype, *pt_prev;
 	struct net_device *orig_dev;
 	int ret = NET_RX_DROP;
+	int *cur_elevator=&__get_cpu_var(sknid_elevator);
 	__be16 type;
+
+	*cur_elevator = 0;
 
 	/* if we've gotten here through NAPI, check netpoll */
 	if (skb->dev->poll && netpoll_rx(skb))
@@ -1873,8 +1883,9 @@ int netif_receive_skb(struct sk_buff *skb)
 
 	list_for_each_entry_rcu(ptype, &ptype_all, list) {
 		if (!ptype->dev || ptype->dev == skb->dev) {
-			if (pt_prev)
+			if (pt_prev) {
 				ret = deliver_skb(skb, pt_prev, orig_dev);
+			}
 			pt_prev = ptype;
 		}
 	}
@@ -1913,7 +1924,27 @@ ncls:
 	}
 
 	if (pt_prev) {
+		/* At this point, cur_elevator may be -2 or a positive value, in
+		 * case a previous protocol handler marked it */
+		if (*cur_elevator) {
+			atomic_inc(&skb->users);
+		}
+		
 		ret = pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
+
+		if ((*cur_elevator)>0) {
+			skb->skb_tag = *cur_elevator;
+			list_for_each_entry_rcu(ptype, &ptype_all, list) {
+				if ((!ptype->dev || ptype->dev == skb->dev) && (ptype->sknid_elevator)) {
+					ret = deliver_skb(skb, ptype, orig_dev);
+				}
+			}
+		}
+
+		if (*cur_elevator) {
+			/* We have a packet */
+			kfree_skb(skb);
+		}
 	} else {
 		kfree_skb(skb);
 		/* Jamal, now you will not able to escape explaining
@@ -3780,6 +3811,7 @@ EXPORT_SYMBOL(unregister_netdevice_notifier);
 EXPORT_SYMBOL(net_enable_timestamp);
 EXPORT_SYMBOL(net_disable_timestamp);
 EXPORT_SYMBOL(dev_get_flags);
+EXPORT_PER_CPU_SYMBOL(sknid_elevator);
 
 #if defined(CONFIG_BRIDGE) || defined(CONFIG_BRIDGE_MODULE)
 EXPORT_SYMBOL(br_handle_frame_hook);
