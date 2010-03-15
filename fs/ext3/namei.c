@@ -1055,6 +1055,10 @@ static struct dentry *ext3_lookup(struct inode * dir, struct dentry *dentry, str
 			return ERR_PTR(-EACCES);
 
 		if (is_bad_inode(inode)) {
+			/* if bad because unlinked, something has gone wrong */
+			if (!inode->i_nlink && printk_ratelimit())
+				ext3_error(inode->i_sb, __FUNCTION__, "unlinked inode %lu in dir #%lu", inode->i_ino, dir->i_ino);
+
 			iput(inode);
 			return ERR_PTR(-ENOENT);
 		}
