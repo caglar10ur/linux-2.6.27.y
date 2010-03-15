@@ -172,6 +172,7 @@ struct bond_parm_tbl xmit_hashtype_tbl[] = {
 {	"layer3+4",		BOND_XMIT_POLICY_LAYER34},
 {	"layer2+3",		BOND_XMIT_POLICY_LAYER23},
 {	"layer3",		BOND_XMIT_POLICY_LAYER3},
+{	"rr",			BOND_XMIT_POLICY_RR},
 {	NULL,			-1},
 };
 
@@ -3522,6 +3523,16 @@ static int bond_xmit_hash_policy_l2(struct sk_buff *skb,
 	return (data->h_dest[5] ^ bond_dev->dev_addr[5]) % count;
 }
 
+/*
+ * Round-robin "hashing" algorithm
+ */
+static int bond_xmit_hash_policy_rr(struct sk_buff *skb,
+				    struct net_device *bond_dev, int count)
+{
+	static atomic_t packets;
+	return atomic_inc_return(&packets) % count;
+}
+
 /*-------------------------- Device entry points ----------------------------*/
 
 static int bond_open(struct net_device *bond_dev)
@@ -4223,6 +4234,8 @@ void bond_set_mode_ops(struct bonding *bond, int mode)
 			bond->xmit_hash_policy = bond_xmit_hash_policy_l23;
 		else if (bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER3)
 			bond->xmit_hash_policy = bond_xmit_hash_policy_l3;
+		else if (bond->params.xmit_policy == BOND_XMIT_POLICY_RR)
+			bond->xmit_hash_policy = bond_xmit_hash_policy_rr;
 		else
 			bond->xmit_hash_policy = bond_xmit_hash_policy_l2;
 		break;
@@ -4238,6 +4251,8 @@ void bond_set_mode_ops(struct bonding *bond, int mode)
 			bond->xmit_hash_policy = bond_xmit_hash_policy_l23;
 		else if (bond->params.xmit_policy == BOND_XMIT_POLICY_LAYER3)
 			bond->xmit_hash_policy = bond_xmit_hash_policy_l3;
+		else if (bond->params.xmit_policy == BOND_XMIT_POLICY_RR)
+			bond->xmit_hash_policy = bond_xmit_hash_policy_rr;
 		else
 			bond->xmit_hash_policy = bond_xmit_hash_policy_l2;
 		break;
