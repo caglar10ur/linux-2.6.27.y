@@ -4,6 +4,15 @@
 
 menu "Linux VServer"
 
+config VSERVER_FILESHARING
+	bool	"(PLANETLAB) Disable Hidden File Module"
+	default y
+	help
+	  This retains the module that when a vserver can
+	  see a file, it can also stat and read it.  The
+	  assumption is that chroot() works and vservers
+	  are contained that way.
+
 config	VSERVER_AUTO_LBACK
 	bool    "Automatically Assign Loopback IP"
 	default y

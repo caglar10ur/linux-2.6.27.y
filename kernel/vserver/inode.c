@@ -368,6 +368,9 @@ int __dx_parse_tag(char *string, tag_t *tag, int remove)
 int dx_parse_tag(char *string, tag_t *tag, int remove)
 {
 	int retval, flags = 0;
+#ifdef CONFIG_VSERVER_FILESHARING
+	flags |= MNT_NOTAGCHECK;
+#endif
 
 	while ((retval = __dx_parse_tag(string, tag, remove)))
 		flags |= retval;
