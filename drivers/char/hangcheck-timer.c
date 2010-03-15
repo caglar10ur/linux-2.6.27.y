@@ -57,7 +57,7 @@
 
 static int hangcheck_tick = DEFAULT_IOFENCE_TICK;
 static int hangcheck_margin = DEFAULT_IOFENCE_MARGIN;
-static int hangcheck_reboot;  /* Defaults to not reboot */
+static int hangcheck_reboot = 1;  /* Defaults to reboot */
 static int hangcheck_dump_tasks;  /* Defaults to not dumping SysRQ T */
 
 /* options - modular */
@@ -175,8 +175,8 @@ static void hangcheck_fire(unsigned long data)
 
 static int __init hangcheck_init(void)
 {
-	printk("Hangcheck: starting hangcheck timer %s (tick is %d seconds, margin is %d seconds).\n",
-	       VERSION_STR, hangcheck_tick, hangcheck_margin);
+	printk("Hangcheck: starting hangcheck timer %s (tick is %d seconds, margin is %d seconds, reboot is %d).\n",
+	       VERSION_STR, hangcheck_tick, hangcheck_margin, hangcheck_reboot);
 #if defined (HAVE_MONOTONIC)
 	printk("Hangcheck: Using monotonic_clock().\n");
 #else
