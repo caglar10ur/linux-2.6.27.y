@@ -146,7 +146,7 @@ static int may_attach(struct task_struct *task)
 		dumpable = task->mm->dumpable;
 	if (!dumpable && !capable(CAP_SYS_PTRACE))
 		return -EPERM;
-	if (!vx_check(task->xid, VS_ADMIN_P|VS_IDENT))
+	if (!vx_check(task->xid, VS_WATCH_P | VS_IDENT))
 		return -EPERM;
 	if (!vx_check(task->xid, VS_IDENT) &&
 		!task_vx_flags(task, VXF_STATE_ADMIN, 0))
