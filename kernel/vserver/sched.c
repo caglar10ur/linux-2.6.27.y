@@ -18,7 +18,6 @@
 
 #include <asm/uaccess.h>
 
-
 #define vxd_check_range(val, min, max) do {		\
 	vxlprintk((val < min) || (val > max),		\
 		"check_range(%ld,%ld,%ld)",		\
@@ -78,6 +77,11 @@ int vx_tokens_recalc(struct _vx_sched_pc *sched_pc,
 	/* how much time did pass? */
 	delta = *norm_time - sched_pc->norm_time;
 	vxd_check_range(delta, 0, INT_MAX);
+	if (delta < 0) {
+	        /* vserver is new or idle for a really long time */
+ 	        sched_pc->norm_time = *norm_time;
+		delta = 0;
+	}
 
 	if (delta >= sched_pc->interval[0]) {
 		long tokens, integral;
@@ -91,7 +95,7 @@ int vx_tokens_recalc(struct _vx_sched_pc *sched_pc,
 		vxd_check_range(delta_min[0], 0, sched_pc->interval[0]);
 #endif
 		/* advance time */
-		sched_pc->norm_time += delta;
+		sched_pc->norm_time += integral;
 
 		/* add tokens */
 		sched_pc->tokens += tokens;
@@ -106,7 +110,12 @@ int vx_tokens_recalc(struct _vx_sched_pc *sched_pc,
 	/* how much was the idle skip? */
 	delta = *idle_time - sched_pc->idle_time;
 	vxd_check_range(delta, 0, INT_MAX);
-
+	if (delta < 0) {
+	        /* vserver is new or idle for a really long time */
+ 	        sched_pc->idle_time = *idle_time;
+		delta = 0;
+	}
+	
 	if (delta >= sched_pc->interval[1]) {
 		long tokens, integral;
 
@@ -161,10 +170,12 @@ on_hold:
 	/* next interval? */
 	if (!sched_pc->fill_rate[0])
 		delta_min[0] = HZ;
-	else if (tokens > sched_pc->fill_rate[0])
-		delta_min[0] += sched_pc->interval[0] *
-			tokens / sched_pc->fill_rate[0];
-	else
+	else if (tokens > sched_pc->fill_rate[0]) { 
+		delta_min[0] = sched_pc->interval[0] * 
+			(tokens / sched_pc->fill_rate[0]) - delta_min[0]; 
+		if (tokens % sched_pc->fill_rate[0]) 
+			delta_min[0] += sched_pc->interval[0]; 
+	} else 
 		delta_min[0] = sched_pc->interval[0] - delta_min[0];
 	vxd_check_range(delta_min[0], 0, INT_MAX);
 
@@ -175,10 +186,12 @@ on_hold:
 	/* next interval? */
 	if (!sched_pc->fill_rate[1])
 		delta_min[1] = HZ;
-	else if (tokens > sched_pc->fill_rate[1])
-		delta_min[1] += sched_pc->interval[1] *
-			tokens / sched_pc->fill_rate[1];
-	else
+	else if (tokens > sched_pc->fill_rate[1]) {
+		delta_min[1] = sched_pc->interval[1] *
+		        (tokens / sched_pc->fill_rate[1]) - delta_min[1];
+		if (tokens % sched_pc->fill_rate[1]) 
+			delta_min[1] += sched_pc->interval[1];
+	} else
 		delta_min[1] = sched_pc->interval[1] - delta_min[1];
 	vxd_check_range(delta_min[1], 0, INT_MAX);
 

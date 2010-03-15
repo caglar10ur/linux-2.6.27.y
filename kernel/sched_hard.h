@@ -179,8 +179,8 @@ void vx_try_unhold(struct rq *rq, int cpu)
 	int minskip = 0;
 
 	/* nothing to do? what about pause? */
-	if (list_empty(&rq->hold_queue))
-		return;
+	//if (list_empty(&rq->hold_queue))
+	//	return;
 
 	list_for_each_safe(l, n, &rq->hold_queue) {
 		int ret, delta_min[2];
