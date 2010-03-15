@@ -169,6 +169,11 @@ unsigned long badness(struct task_struct *p, unsigned long uptime)
 	return points;
 }
 
+#if defined(CONFIG_OOM_PANIC) && defined(CONFIG_OOM_KILLER)
+#warning Only define OOM_PANIC or OOM_KILLER; not both
+#endif
+
+#ifdef CONFIG_OOM_KILLER
 /*
  * Types of limitations to the nodes from which allocations may occur
  */
@@ -481,3 +486,37 @@ out:
 	if (!test_thread_flag(TIF_MEMDIE))
 		schedule_timeout_uninterruptible(1);
 }
+#endif /* CONFIG_OOM_KILLER */
+
+#ifdef CONFIG_OOM_PANIC
+/**
+ * out_of_memory - panic if the system out of memory?
+ */
+void out_of_memory(struct zonelist *zonelist, gfp_t gfp_mask, int order)
+{
+	/*
+	 * oom_lock protects out_of_memory()'s static variables.
+	 * It's a global lock; this is not performance-critical.
+	 */
+	static spinlock_t oom_lock = SPIN_LOCK_UNLOCKED;
+	static unsigned long count;
+
+	spin_lock(&oom_lock);
+
+	/*
+	 * If we have gotten only a few failures,
+	 * we're not really oom. 
+	 */
+	if (++count >= 10) {
+		/*
+		 * Ok, really out of memory. Panic.
+		 */
+
+		printk("oom-killer: gfp_mask=0x%x\n", gfp_mask);
+		show_free_areas();
+
+		panic("Out Of Memory");
+	}
+	spin_unlock(&oom_lock);
+}
+#endif /*  CONFIG_OOM_PANIC */
