@@ -1,0 +1,24 @@
+Web100 sysctl variables
+John Heffner <jheffner@psc.edu>
+October 10, 2002
+
+net.ipv4.WAD_FloydAIMD
+	This value is used for WAD_FloydAIMD by a connection when its KIS
+	variable is 0.  This variable requires that private extenisons be
+	enabled.
+
+net.ipv4.WAD_IFQ
+	This value is used for WAD_IFQ by a connection when its KIS
+	variable is 0.  This variable requires that Net100 extensions be
+	enabled.
+
+net.ipv4.WAD_MaxBurst
+	This value is used for WAD_MaxBurst by a connection when its KIS
+	variable is 0.  This variable requires that Net100 extensions be
+	enabled.
+
+net.ipv4.web100_fperms
+	Sets the file permissions of the files in /proc/web100/*/
+
+net.ipv4.web100_gid
+	Sets the group of the files in /proc/web100/*/

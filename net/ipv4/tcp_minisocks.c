@@ -336,6 +336,8 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 		} while (0);
 #endif
 
+		WEB100_VAR_SET(tp, State, WC_STATE_TIMEWAIT);
+		
 		/* Linkage updates. */
 		__inet_twsk_hashdance(tw, sk, &tcp_hashinfo);
 

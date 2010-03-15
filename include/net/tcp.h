@@ -42,6 +42,8 @@
 
 #include <linux/seq_file.h>
 
+#include <net/web100.h>
+
 extern struct inet_hashinfo tcp_hashinfo;
 
 extern atomic_t tcp_orphan_count;
@@ -232,6 +234,14 @@ extern int sysctl_tcp_base_mss;
 extern int sysctl_tcp_workaround_signed_windows;
 extern int sysctl_tcp_slow_start_after_idle;
 extern int sysctl_tcp_max_ssthresh;
+#ifdef CONFIG_WEB100_NET100
+extern int sysctl_WAD_IFQ;
+extern int sysctl_WAD_MaxBurst;
+#endif
+#ifdef CONFIG_WEB100_STATS
+extern int sysctl_web100_fperms;
+extern int sysctl_web100_gid;
+#endif
 
 extern atomic_t tcp_memory_allocated;
 extern atomic_t tcp_sockets_allocated;
@@ -755,6 +765,9 @@ extern __u32 tcp_init_cwnd(struct tcp_sock *tp, struct dst_entry *dst);
  */
 static __inline__ __u32 tcp_max_burst(const struct tcp_sock *tp)
 {
+#ifdef CONFIG_WEB100_NET100
+	return (NET100_WAD(tp, WAD_MaxBurst, sysctl_WAD_MaxBurst));
+#endif
 	return 3;
 }
 
@@ -901,6 +914,8 @@ static const char *statename[]={
 static inline void tcp_set_state(struct sock *sk, int state)
 {
 	int oldstate = sk->sk_state;
+
+	WEB100_VAR_SET(tcp_sk(sk), State, web100_state(state));
 
 	switch (state) {
 	case TCP_ESTABLISHED:

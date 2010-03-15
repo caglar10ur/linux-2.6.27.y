@@ -658,6 +658,70 @@ config TCP_MD5SIG
 
 	  If unsure, say N.
 
+menuconfig WEB100
+	bool "IP: Web100 networking enhancements"
+	depends on INET && EXPERIMENTAL
+
+if WEB100
+
+config WEB100_STATS
+	bool "Web100: Extended TCP statistics"
+	depends on WEB100
+	---help---
+	  Support for the Web100 implementation of the TCP extended stastics
+	  MIB (see http://www.web100.org/mib/).
+
+if WEB100_STATS
+
+config WEB100_FPERMS
+	int "Web100:   Default file permissions"
+	depends on WEB100_STATS
+	default "384"
+	---help---
+	  This controls the default file permission bits on the Web100
+	  files in /proc/web100.  This value can be changed at runtime using
+	  the sysctl variable net.ipv4.web100_fperms.  Unless all users on
+	  the system are trusted, it is safest to limit both readability
+	  and writability to trusted users.
+	  
+	  Due to limitations of the kernel config scripts, this is a decimal
+	  value rather than octal.  Some common values:
+	  
+	    384 = 0600 = rw-------
+	    416 = 0640 = rw-r-----
+	    432 = 0660 = rw-rw----
+	    436 = 0664 = rw-rw-r--
+	    438 = 0666 = rw-rw-rw-
+
+config WEB100_GID
+	int "Web100:   Default gid"
+	depends on WEB100_STATS
+	default "0"
+	---help---
+	  This will be the default group of the Web100 files in /proc/web100.
+	  It may be useful to create a "web100" group on your system, and set
+	  CONFIG_WEB100_FPERMS (above) with special group permissions.  This
+	  value can be changed at runtime using the sysctl variable
+	  net.ipv4.web100_gid.
+
+config WEB100_NET100
+	bool "Web100:   Net100 extensions"
+	depends on WEB100_STATS
+	---help---
+	  Enables certain "Net100" extensions to TCP that are controlled by
+	  writable MIB variables.  These controls may be particularly useful
+	  for specially tuning a flow on a long fast network.
+
+endif
+
+config WEB100_NETLINK
+	bool "Web100: Netlink event notification service"
+	depends on WEB100
+	---help---
+	  Required by the Net100 Work Around Daemon (WAD).
+
+endif
+
 source "net/ipv4/ipvs/Kconfig"
 
 #

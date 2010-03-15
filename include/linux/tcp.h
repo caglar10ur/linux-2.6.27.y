@@ -402,6 +402,10 @@ struct tcp_sock {
 /* TCP MD5 Signagure Option information */
 	struct tcp_md5sig_info	*md5sig_info;
 #endif
+
+#ifdef CONFIG_WEB100_STATS
+	struct web100stats	*tcp_stats;
+#endif
 };
 
 static inline struct tcp_sock *tcp_sk(const struct sock *sk)

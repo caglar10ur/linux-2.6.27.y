@@ -1,0 +1,102 @@
+WEB100 proc interface notes
+===========================
+
+The web100 modifications to the kernel collect information about the
+state of a TCP transfer in a kernel data structure that is linked
+out of the "sock" TCP structure in sock.h.  Please see
+"include/net/web100_stats.h" for the structure definition.
+
+The API for this structure is provided through the /proc interface.
+This document provides a brief description of this interface.  Please
+see fs/proc/web100.c for source code.
+
+First, kernel creates the /proc/web100 directory and the file
+/proc/web100/header at system boot time.
+
+Each new TCP connection is assigned a unique, unchanging number
+(similar to a pid), and its directory name is that number as ASCII
+decimal.  These directories persist for about sixty seconds after the
+connection is terminated (goes into a CLOSED or TIME_WAIT state).  The
+connection stats will not change after the connection is terminated.
+(So a connection whose state variable is TIME_WAIT is not necessarily
+still in TIME_WAIT.)  It should be noted that what is meant by a
+"connection" here is actually one side of a connection.  If a
+connection is created from the local host to the local host, two
+connection ID's will be created.
+
+When writing an application to read from the proc interface, it should be
+taken into consideration that the directories and their files can disappear at
+any time (they do so at an interrupt level).  So if a file open fails on a
+file you just looked up (say, with glob), that's probably normal and the
+program should handle it gracefully.
+
+Another seemingly strange thing that can happen is that stats for multiple
+connections with the same four-tuple can show up.  No more than one of the
+connections may be in any state but CLOSED or TIME_WAIT.  This behavior is
+correct, and should be handled as such.
+
+The algorithms governing the connection numbers are not yet final. 
+Currently, for simplification, it is only possible to have 32768
+connections.
+
+Inside each connection directory is an identical set of files.  One is
+spec-ascii, which contains the connection four-tuple in human-readable
+format.  One can, for example, see all outgoing ssh connections by executing
+"grep ':22$' /proc/web100/*/spec-ascii" from the command prompt.
+
+The remaining files provide access to states of TCP-KIS variables in
+local host byte-order.  Since the number, names, and contents of these
+files can and will change with releases, they are described in a
+header file -- /proc/web100/header.  A file named spec, which contains the
+variables describing the connection's four-tuple, should be present
+for any release.
+
+The header file is in human-readable format as follows:
+	<version>
+	
+	/<filename>
+	<varname> <offset> <type>
+	<varname> <offset> <type>
+	...
+	
+	/<filename>
+	...
+The filename is the name of the file inside each connection directory.  (The
+/ is prepended to make it clear it is a new file, not a new variable in the
+previous file.  There is also an empty line before each filename.)  Each
+file has an arbitrary number of variables, and there are an arbitrary number
+of files.  The type is an integer, and is currently defined something like:
+
+	enum {
+		WEB100_TYPE_INTEGER,
+		WEB100_TYPE_INTEGER32,
+		WEB100_TYPE_IP_ADDRESS,
+		WEB100_TYPE_COUNTER32,
+		WEB100_TYPE_GAUGE32,
+		WEB100_TYPE_UNSIGNED32,
+		WEB100_TYPE_TIME_TICKS,
+		WEB100_TYPE_COUNTER64,
+		WEB100_TYPE_UNSIGNED16
+	};
+
+in the kernel source file fs/proc/web100.c.  These correspond to
+MIB-II types.  (RFC2578)
+
+To read variables, seek to the appropriate offset, then read the appropriate
+amount of data.  (Length is implied by the type.)  Multiple variables may be
+read with a single read, and will be read atomically when doing so. 
+Currently, all variables are readable, but this may not be true in the
+future.
+
+To write variables, seek to the appropriate offset, and write the
+appropriate amount of data.  Only a single variable may be written at one
+time.  If variables must be atomically written, a variable should be used as
+a flag to signal that the write is done, and the kernel code depending on
+the variables should be written to handle this.
+
+See: http://www.web100.org
+Please send coments to prog@web100.org
+
+John Heffner, Matt Mathis, R. Reddy
+August 2000, Jan 2001
+

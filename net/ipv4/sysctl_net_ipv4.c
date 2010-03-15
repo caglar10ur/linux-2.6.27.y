@@ -862,6 +862,42 @@ ctl_table ipv4_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+#ifdef CONFIG_WEB100_NET100
+	{
+		.ctl_name	= NET_IPV4_WAD_IFQ,
+		.procname	= "WAD_IFQ",
+		.data		= &sysctl_WAD_IFQ,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.ctl_name	= NET_IPV4_WAD_MAX_BURST,
+		.procname	= "WAD_MaxBurst",
+		.data		= &sysctl_WAD_MaxBurst,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
+#endif
+#ifdef CONFIG_WEB100_STATS
+	{
+		.ctl_name	= NET_IPV4_WEB100_FPERMS,
+		.procname	= "web100_fperms",
+		.data		= &sysctl_web100_fperms,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &web100_proc_dointvec_update,
+	},
+	{
+		.ctl_name	= NET_IPV4_WEB100_GID,
+		.procname	= "web100_gid",
+		.data		= &sysctl_web100_gid,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= &web100_proc_dointvec_update,
+	},
+#endif
 	{ .ctl_name = 0 }
 };
 

@@ -266,6 +266,10 @@ int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 							   inet->daddr,
 							   inet->sport,
 							   usin->sin_port);
+	WEB100_VAR_SET(tp, SndISS, tp->write_seq);
+	WEB100_VAR_SET(tp, SndMax, tp->write_seq);
+	WEB100_VAR_SET(tp, SndNxt, tp->write_seq);
+	WEB100_VAR_SET(tp, SndUna, tp->write_seq);
 
 	inet->id = tp->write_seq ^ jiffies;
 
@@ -399,6 +403,7 @@ void tcp_v4_err(struct sk_buff *skb, u32 info)
 
 	switch (type) {
 	case ICMP_SOURCE_QUENCH:
+		WEB100_VAR_INC(tp, QuenchRcvd);
 		/* Just silently ignore these. */
 		goto out;
 	case ICMP_PARAMETERPROB:
@@ -1433,6 +1438,13 @@ struct sock *tcp_v4_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
 	newsk = tcp_create_openreq_child(sk, req, skb);
 	if (!newsk)
 		goto exit;
+#ifdef CONFIG_WEB100_STATS
+	if (web100_stats_create(newsk)) {
+		sk_free(newsk);
+		goto exit;
+	}
+	tcp_sk(newsk)->tcp_stats->wc_vars.LocalAddressType = WC_ADDRTYPE_IPV4;
+#endif
 
 	newsk->sk_gso_type = SKB_GSO_TCPV4;
 	sk_setup_caps(newsk, dst);
@@ -1675,6 +1687,7 @@ process:
 	skb->dev = NULL;
 
 	bh_lock_sock_nested(sk);
+	WEB100_UPDATE_FUNC(tcp_sk(sk), web100_update_segrecv(tcp_sk(sk), skb));
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {
 #ifdef CONFIG_NET_DMA
@@ -1691,6 +1704,7 @@ process:
 		}
 	} else
 		sk_add_backlog(sk, skb);
+	WEB100_UPDATE_FUNC(tcp_sk(sk), web100_update_cwnd(tcp_sk(sk)));
 	bh_unlock_sock(sk);
 
 	sock_put(sk);
@@ -1882,6 +1896,16 @@ static int tcp_v4_init_sock(struct sock *sk)
 	sk->sk_sndbuf = sysctl_tcp_wmem[1];
 	sk->sk_rcvbuf = sysctl_tcp_rmem[1];
 
+#ifdef CONFIG_WEB100_STATS
+	{
+		int err;
+		if ((err = web100_stats_create(sk))) {
+			return err;
+		}
+		tcp_sk(sk)->tcp_stats->wc_vars.LocalAddressType = WC_ADDRTYPE_IPV4;
+	}
+#endif
+
 	atomic_inc(&tcp_sockets_allocated);
 
 	return 0;
@@ -1921,6 +1945,10 @@ int tcp_v4_destroy_sock(struct sock *sk)
 	/* Clean up a referenced TCP bind bucket. */
 	if (inet_csk(sk)->icsk_bind_hash)
 		inet_put_port(&tcp_hashinfo, sk);
+
+#ifdef CONFIG_WEB100_STATS
+	web100_stats_destroy(tcp_sk(sk)->tcp_stats);
+#endif
 
 	/*
 	 * If sendmsg cached page exists, toss it.

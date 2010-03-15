@@ -67,6 +67,7 @@ static void update_send_head(struct sock *sk, struct sk_buff *skb)
 
 	tcp_advance_send_head(sk, skb);
 	tp->snd_nxt = TCP_SKB_CB(skb)->end_seq;
+	WEB100_UPDATE_FUNC(tp, web100_update_snd_nxt(tp));
 	tcp_packets_out_inc(sk, skb);
 }
 
@@ -250,6 +251,7 @@ static u16 tcp_select_window(struct sock *sk)
 	}
 	tp->rcv_wnd = new_win;
 	tp->rcv_wup = tp->rcv_nxt;
+	WEB100_UPDATE_FUNC(tp, web100_update_rwin_sent(tp));
 
 	/* Make sure we do not exceed the maximum possible
 	 * scaled window.
@@ -544,11 +546,32 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it, 
 	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq)
 		TCP_INC_STATS(TCP_MIB_OUTSEGS);
 
+#ifdef CONFIG_WEB100_STATS
+	{
+		/* If the skb isn't cloned, we can't reference it after
+		 * calling queue_xmit, so copy everything we need here. */
+		int len = skb->len;
+		int pcount = tcp_skb_pcount(skb);
+		__u32 seq = TCP_SKB_CB(skb)->seq;
+		__u32 end_seq = TCP_SKB_CB(skb)->end_seq;
+		int flags = TCP_SKB_CB(skb)->flags;
+		
 	err = icsk->icsk_af_ops->queue_xmit(skb, 0);
+		if (likely(err == 0))
+			WEB100_UPDATE_FUNC(tp, web100_update_segsend(sk, len, pcount,
+			                       seq, end_seq, flags));
+	}
+#else
+	err = icsk->icsk_af_ops->queue_xmit(skb, 0);
+#endif
 	if (likely(err <= 0))
 		return err;
 
+#ifdef CONFIG_WEB100_NET100
+	if (!NET100_WAD(tp, WAD_IFQ, sysctl_WAD_IFQ))
+#endif
 	tcp_enter_cwr(sk, 1);
+	WEB100_VAR_INC(tp, SendStall);
 
 	return net_xmit_eval(err);
 
@@ -868,6 +891,7 @@ unsigned int tcp_sync_mss(struct sock *sk, u32 pmtu)
 	if (icsk->icsk_mtup.enabled)
 		mss_now = min(mss_now, tcp_mtu_to_mss(sk, icsk->icsk_mtup.search_low));
 	tp->mss_cache = mss_now;
+	WEB100_UPDATE_FUNC(tp, web100_update_mss(tp));
 
 	return mss_now;
 }
@@ -1062,21 +1086,22 @@ static inline int tcp_snd_wnd_test(struct tcp_sock *tp, struct sk_buff *skb, uns
  * should be put on the wire right now.  If so, it returns the number of
  * packets allowed by the congestion window.
  */
-static unsigned int tcp_snd_test(struct sock *sk, struct sk_buff *skb,
+static int tcp_snd_wait(struct sock *sk, struct sk_buff *skb,
 				 unsigned int cur_mss, int nonagle)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
-	unsigned int cwnd_quota;
+	int cwnd_quota;
 
 	tcp_init_tso_segs(sk, skb, cur_mss);
 
 	if (!tcp_nagle_test(tp, skb, cur_mss, nonagle))
-		return 0;
+		return -WC_SNDLIM_SENDER;
 
 	cwnd_quota = tcp_cwnd_test(tp, skb);
-	if (cwnd_quota &&
-	    !tcp_snd_wnd_test(tp, skb, cur_mss))
-		cwnd_quota = 0;
+	if (!cwnd_quota)
+		return -WC_SNDLIM_CWND;
+	if (!tcp_snd_wnd_test(tp, skb, cur_mss))
+		return -WC_SNDLIM_RWIN;
 
 	return cwnd_quota;
 }
@@ -1087,10 +1112,10 @@ int tcp_may_send_now(struct sock *sk)
 	struct sk_buff *skb = tcp_send_head(sk);
 
 	return (skb &&
-		tcp_snd_test(sk, skb, tcp_current_mss(sk, 1),
+		tcp_snd_wait(sk, skb, tcp_current_mss(sk, 1),
 			     (tcp_skb_is_last(sk, skb) ?
 			      TCP_NAGLE_PUSH :
-			      tp->nonagle)));
+			      tp->nonagle)) > 0);
 }
 
 /* Trim TSO SKB to LEN bytes, put the remaining data into a new packet
@@ -1357,6 +1382,7 @@ static int tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle)
 	unsigned int tso_segs, sent_pkts;
 	int cwnd_quota;
 	int result;
+	int why = WC_SNDLIM_NONE;
 
 	/* If we are closed, the bytes will have to remain here.
 	 * In time closedown will finish, we empty the write queue and all
@@ -1381,20 +1407,29 @@ static int tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle)
 		BUG_ON(!tso_segs);
 
 		cwnd_quota = tcp_cwnd_test(tp, skb);
-		if (!cwnd_quota)
+		if (!cwnd_quota) {
+			why = WC_SNDLIM_CWND;
 			break;
+		}
 
-		if (unlikely(!tcp_snd_wnd_test(tp, skb, mss_now)))
+		if (unlikely(!tcp_snd_wnd_test(tp, skb, mss_now))) {
+			why = WC_SNDLIM_RWIN;
 			break;
+		}
 
 		if (tso_segs == 1) {
 			if (unlikely(!tcp_nagle_test(tp, skb, mss_now,
 						     (tcp_skb_is_last(sk, skb) ?
-						      nonagle : TCP_NAGLE_PUSH))))
+						      nonagle : TCP_NAGLE_PUSH)))) {
+				why = WC_SNDLIM_SENDER;
 				break;
+			}
 		} else {
-			if (tcp_tso_should_defer(sk, skb))
+			if (tcp_tso_should_defer(sk, skb)) {
+				/* XXX: is this sender or cwnd? */
+				why = WC_SNDLIM_SENDER;
 				break;
+		}
 		}
 
 		limit = mss_now;
@@ -1416,8 +1451,10 @@ static int tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle)
 
 		TCP_SKB_CB(skb)->when = tcp_time_stamp;
 
-		if (unlikely(tcp_transmit_skb(sk, skb, 1, GFP_ATOMIC)))
+		if (unlikely(tcp_transmit_skb(sk, skb, 1, GFP_ATOMIC))) {
+			why = WC_SNDLIM_SENDER;
 			break;
+		}
 
 		/* Advance the send_head.  This one is sent out.
 		 * This call will increment packets_out.
@@ -1427,6 +1464,9 @@ static int tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle)
 		tcp_minshall_update(tp, mss_now, skb);
 		sent_pkts++;
 	}
+	if (why == WC_SNDLIM_NONE)
+		why = WC_SNDLIM_SENDER;
+	WEB100_UPDATE_FUNC(tp, web100_update_sndlim(tp, why));
 
 	if (likely(sent_pkts)) {
 		tcp_cwnd_validate(sk);
@@ -1457,14 +1497,15 @@ void tcp_push_one(struct sock *sk, unsigned int mss_now)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *skb = tcp_send_head(sk);
-	unsigned int tso_segs, cwnd_quota;
+	unsigned int tso_segs;
+	int cwnd_quota;
 
 	BUG_ON(!skb || skb->len < mss_now);
 
 	tso_segs = tcp_init_tso_segs(sk, skb, mss_now);
-	cwnd_quota = tcp_snd_test(sk, skb, mss_now, TCP_NAGLE_PUSH);
+	cwnd_quota = tcp_snd_wait(sk, skb, mss_now, TCP_NAGLE_PUSH);
 
-	if (likely(cwnd_quota)) {
+	if (likely(cwnd_quota > 0)) {
 		unsigned int limit;
 
 		BUG_ON(!tso_segs);
@@ -1483,8 +1524,10 @@ void tcp_push_one(struct sock *sk, unsigned int mss_now)
 		}
 
 		if (skb->len > limit &&
-		    unlikely(tso_fragment(sk, skb, limit, mss_now)))
+		    unlikely(tso_fragment(sk, skb, limit, mss_now))) {
+			WEB100_UPDATE_FUNC(tp, web100_update_sndlim(tp, WC_SNDLIM_SENDER));
 			return;
+		}
 
 		/* Send it out now. */
 		TCP_SKB_CB(skb)->when = tcp_time_stamp;
@@ -1493,7 +1536,11 @@ void tcp_push_one(struct sock *sk, unsigned int mss_now)
 			update_send_head(sk, skb);
 			tcp_cwnd_validate(sk);
 			return;
+		} else {
+			WEB100_UPDATE_FUNC(tp, web100_update_sndlim(tp, WC_SNDLIM_SENDER));
 		}
+	} else {
+		WEB100_UPDATE_FUNC(tp, web100_update_sndlim(tp, -cwnd_quota));
 	}
 }
 
@@ -1610,6 +1657,9 @@ u32 __tcp_select_window(struct sock *sk)
 			window = free_space;
 	}
 
+	WEB100_VAR_SET(tp, X_dbg3, free_space);
+	WEB100_VAR_SET(tp, X_dbg2, mss);
+	WEB100_VAR_SET(tp, X_dbg1, window);
 	return window;
 }
 
@@ -2248,6 +2298,7 @@ static void tcp_connect_init(struct sock *sk)
 	tp->snd_wnd = 0;
 	tcp_init_wl(tp, tp->write_seq, 0);
 	tp->snd_una = tp->write_seq;
+	WEB100_VAR_SET(tp, SndUna, tp->snd_una);
 	tp->snd_sml = tp->write_seq;
 	tp->rcv_nxt = 0;
 	tp->rcv_wup = 0;
@@ -2299,6 +2350,7 @@ int tcp_connect(struct sock *sk)
 	 * in order to make this packet get counted in tcpOutSegs.
 	 */
 	tp->snd_nxt = tp->write_seq;
+	WEB100_UPDATE_FUNC(tp, web100_update_snd_nxt(tp));
 	tp->pushed_seq = tp->write_seq;
 	TCP_INC_STATS(TCP_MIB_ACTIVEOPENS);
 

@@ -415,6 +415,7 @@ static void tcp_rcv_rtt_update(struct tcp_sock *tp, u32 sample, int win_dep)
 
 	if (tp->rcv_rtt_est.rtt != new_sample)
 		tp->rcv_rtt_est.rtt = new_sample;
+	WEB100_VAR_SET(tp, X_RcvRTT, ((1000000*tp->rcv_rtt_est.rtt)/HZ)>>3);
 }
 
 static inline void tcp_rcv_rtt_measure(struct tcp_sock *tp)
@@ -553,6 +554,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 	if (skb->len >= 128)
 		tcp_grow_window(sk, skb);
+	WEB100_UPDATE_FUNC(tp, web100_update_rcv_nxt(tp));
 }
 
 /* Called to compute a smoothed rtt estimate. The data fed to this
@@ -790,6 +792,7 @@ void tcp_enter_cwr(struct sock *sk, const int set_ssthresh)
 
 		tcp_set_ca_state(sk, TCP_CA_CWR);
 	}
+	WEB100_UPDATE_FUNC(tp, web100_update_congestion(tp, 0));
 }
 
 /* Initialize metrics on socket. */
@@ -815,6 +818,7 @@ static void tcp_init_metrics(struct sock *sk)
 	    tp->reordering != dst_metric(dst, RTAX_REORDERING)) {
 		tp->rx_opt.sack_ok &= ~2;
 		tp->reordering = dst_metric(dst, RTAX_REORDERING);
+		WEB100_VAR_SET(tp, RetranThresh, tp->reordering);
 	}
 
 	if (dst_metric(dst, RTAX_RTT) == 0)
@@ -871,6 +875,7 @@ static void tcp_update_reordering(struct sock *sk, const int metric,
 	struct tcp_sock *tp = tcp_sk(sk);
 	if (metric > tp->reordering) {
 		tp->reordering = min(TCP_MAX_REORDERING, metric);
+		WEB100_VAR_SET(tp, RetranThresh, tp->reordering);
 
 		/* This exciting event is worth to be remembered. 8) */
 		if (ts)
@@ -961,6 +966,9 @@ tcp_sacktag_write_queue(struct sock *sk, struct sk_buff *ack_skb, u32 prior_snd_
 	int i;
 	int first_sack_index;
 
+	WEB100_VAR_INC(tp, SACKsRcvd);
+	WEB100_VAR_ADD(tp, SACKBlocksRcvd, num_sacks);
+
 	if (!tp->sacked_out)
 		tp->fackets_out = 0;
 	prior_fackets = tp->fackets_out;
@@ -979,6 +987,9 @@ tcp_sacktag_write_queue(struct sock *sk, struct sk_buff *ack_skb, u32 prior_snd_
 		tp->rx_opt.sack_ok |= 4;
 		NET_INC_STATS_BH(LINUX_MIB_TCPDSACKOFORECV);
 	}
+
+	if (found_dup_sack)
+		WEB100_VAR_INC(tp, DSACKDups);
 
 	/* D-SACK for already forgotten data...
 	 * Do dumb counting. */
@@ -1472,6 +1483,8 @@ void tcp_enter_loss(struct sock *sk, int how)
 	struct sk_buff *skb;
 	int cnt = 0;
 
+	WEB100_UPDATE_FUNC(tp, web100_update_congestion(tp, 0));
+
 	/* Reduce ssthresh if it has not yet been made inside this window. */
 	if (icsk->icsk_ca_state <= TCP_CA_Disorder || tp->snd_una == tp->high_seq ||
 	    (icsk->icsk_ca_state == TCP_CA_Loss && !icsk->icsk_retransmits)) {
@@ -1511,6 +1524,7 @@ void tcp_enter_loss(struct sock *sk, int how)
 
 	tp->reordering = min_t(unsigned int, tp->reordering,
 					     sysctl_tcp_reordering);
+	WEB100_VAR_SET(tp, RetranThresh, tp->reordering);
 	tcp_set_ca_state(sk, TCP_CA_Loss);
 	tp->high_seq = tp->snd_nxt;
 	TCP_ECN_queue_cwr(tp);
@@ -1845,8 +1859,19 @@ static void tcp_update_scoreboard(struct sock *sk)
  */
 static inline void tcp_moderate_cwnd(struct tcp_sock *tp)
 {
+#ifdef CONFIG_WEB100_STATS
+	{
+		u32 t = tcp_packets_in_flight(tp) + tcp_max_burst(tp);
+		if (t < tp->snd_cwnd) {
+			tp->snd_cwnd = t;
+			WEB100_VAR_INC(tp, OtherReductions);
+			WEB100_VAR_INC(tp, X_OtherReductionsCM);
+		}
+	};
+#else
 	tp->snd_cwnd = min(tp->snd_cwnd,
 			   tcp_packets_in_flight(tp)+tcp_max_burst(tp));
+#endif
 	tp->snd_cwnd_stamp = tcp_time_stamp;
 }
 
@@ -1929,6 +1954,7 @@ static void tcp_undo_cwr(struct sock *sk, const int undo)
 	}
 	tcp_moderate_cwnd(tp);
 	tp->snd_cwnd_stamp = tcp_time_stamp;
+	WEB100_VAR_INC(tp, CongestionOverCount);	/* XXX This is wrong. -JWH */
 
 	/* There is something screwy going on with the retrans hints after
 	   an undo */
@@ -2271,6 +2297,8 @@ tcp_fastretrans_alert(struct sock *sk, u32 prior_snd_una,
 		tp->bytes_acked = 0;
 		tp->snd_cwnd_cnt = 0;
 		tcp_set_ca_state(sk, TCP_CA_Recovery);
+		WEB100_UPDATE_FUNC(tp, web100_update_congestion(tp, 0));
+		WEB100_VAR_INC(tp, FastRetran);	/* WEB100_XXX */
 	}
 
 	if (do_lost || tcp_head_timedout(sk))
@@ -2303,6 +2331,7 @@ static void tcp_ack_saw_tstamp(struct sock *sk, int flag)
 	const __u32 seq_rtt = tcp_time_stamp - tp->rx_opt.rcv_tsecr;
 	tcp_rtt_estimator(sk, seq_rtt);
 	tcp_set_rto(sk);
+	WEB100_UPDATE_FUNC(tp, web100_update_rtt(sk, seq_rtt));
 	inet_csk(sk)->icsk_backoff = 0;
 	tcp_bound_rto(sk);
 }
@@ -2323,6 +2352,7 @@ static void tcp_ack_no_tstamp(struct sock *sk, u32 seq_rtt, int flag)
 
 	tcp_rtt_estimator(sk, seq_rtt);
 	tcp_set_rto(sk);
+	WEB100_UPDATE_FUNC(tcp_sk(sk), web100_update_rtt(sk, seq_rtt));
 	inet_csk(sk)->icsk_backoff = 0;
 	tcp_bound_rto(sk);
 }
@@ -2342,6 +2372,27 @@ static void tcp_cong_avoid(struct sock *sk, u32 ack, u32 rtt,
 			   u32 in_flight, int good)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
+#ifdef CONFIG_WEB100_STATS
+	struct tcp_sock *tp = tcp_sk(sk);
+	struct web100stats *stats = tp->tcp_stats;
+	struct web100directs *vars = &stats->wc_vars;
+	
+	if (tp->snd_cwnd > tp->snd_cwnd_clamp) {
+		tp->snd_cwnd--;
+		return;
+	}
+	
+#ifdef CONFIG_WEB100_NET100
+	if (vars->WAD_NoAI) {
+		tp->snd_cwnd += vars->WAD_CwndAdjust;
+		vars->WAD_CwndAdjust = 0;
+		tp->snd_cwnd_stamp = tcp_time_stamp;
+		tp->snd_cwnd = min(tp->snd_cwnd, (__u32)tp->snd_cwnd_clamp);
+		return;
+	}
+#endif
+#endif	
+	
 	icsk->icsk_ca_ops->cong_avoid(sk, ack, rtt, in_flight, good);
 	tcp_sk(sk)->snd_cwnd_stamp = tcp_time_stamp;
 }
@@ -2620,10 +2671,12 @@ static int tcp_ack_update_window(struct sock *sk, struct sk_buff *skb, u32 ack,
 				tp->max_window = nwin;
 				tcp_sync_mss(sk, inet_csk(sk)->icsk_pmtu_cookie);
 			}
+			WEB100_UPDATE_FUNC(tp, web100_update_rwin_rcvd(tp));
 		}
 	}
 
 	tp->snd_una = ack;
+	WEB100_UPDATE_FUNC(tp, web100_update_snd_una(tp));
 
 	return flag;
 }
@@ -2804,6 +2857,7 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 		 */
 		tcp_update_wl(tp, ack, ack_seq);
 		tp->snd_una = ack;
+		WEB100_UPDATE_FUNC(tp, web100_update_snd_una(tp));
 		flag |= FLAG_WIN_UPDATE;
 
 		tcp_ca_event(sk, CA_EVENT_FAST_ACK);
@@ -2820,8 +2874,10 @@ static int tcp_ack(struct sock *sk, struct sk_buff *skb, int flag)
 		if (TCP_SKB_CB(skb)->sacked)
 			flag |= tcp_sacktag_write_queue(sk, skb, prior_snd_una);
 
-		if (TCP_ECN_rcv_ecn_echo(tp, tcp_hdr(skb)))
+		if (TCP_ECN_rcv_ecn_echo(tp, tcp_hdr(skb))) {
 			flag |= FLAG_ECE;
+			WEB100_VAR_INC(tp, ECERcvd);
+		}
 
 		tcp_ca_event(sk, CA_EVENT_SLOW_ACK);
 	}
@@ -3240,6 +3296,8 @@ static void tcp_send_dupack(struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
+	WEB100_VAR_INC(tp, DupAcksOut);
+
 	if (TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq &&
 	    before(TCP_SKB_CB(skb)->seq, tp->rcv_nxt)) {
 		NET_INC_STATS_BH(LINUX_MIB_DELAYEDACKLOST);
@@ -3499,6 +3557,10 @@ queue_and_out:
 
 		tcp_fast_path_check(sk);
 
+#ifdef CONFIG_WEB100_STATS
+		web100_update_recvq(sk);
+#endif
+
 		if (eaten > 0)
 			__kfree_skb(skb);
 		else if (!sock_flag(sk, SOCK_DEAD))
@@ -3557,6 +3619,9 @@ drop:
 	SOCK_DEBUG(sk, "out of order segment: rcv_next %X seq %X - %X\n",
 		   tp->rcv_nxt, TCP_SKB_CB(skb)->seq, TCP_SKB_CB(skb)->end_seq);
 
+#ifdef CONFIG_WEB100_STATS
+	web100_update_recvq(sk);
+#endif
 	sk_stream_set_owner_r(skb, sk);
 
 	if (!skb_peek(&tp->out_of_order_queue)) {
@@ -3851,6 +3916,8 @@ void tcp_cwnd_application_limited(struct sock *sk)
 		if (win_used < tp->snd_cwnd) {
 			tp->snd_ssthresh = tcp_current_ssthresh(sk);
 			tp->snd_cwnd = (tp->snd_cwnd + win_used) >> 1;
+			WEB100_VAR_INC(tp, OtherReductions);
+			WEB100_VAR_INC(tp, X_OtherReductionsCV);
 		}
 		tp->snd_cwnd_used = 0;
 	}
@@ -4323,6 +4390,9 @@ int tcp_rcv_established(struct sock *sk, struct sk_buff *skb,
 				tp->rcv_nxt = TCP_SKB_CB(skb)->end_seq;
 			}
 
+#ifdef CONFIG_WEB100_STATS
+			web100_update_recvq(sk);
+#endif
 			tcp_event_data_recv(sk, skb);
 
 			if (TCP_SKB_CB(skb)->ack_seq != tp->snd_una) {
@@ -4529,6 +4599,9 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 		tp->copied_seq = tp->rcv_nxt;
 		smp_mb();
 		tcp_set_state(sk, TCP_ESTABLISHED);
+#ifdef CONFIG_WEB100_STATS
+		web100_stats_establish(sk);
+#endif
 
 		security_inet_conn_established(sk, skb);
 
@@ -4780,6 +4853,9 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 				smp_mb();
 				tcp_set_state(sk, TCP_ESTABLISHED);
 				sk->sk_state_change(sk);
+#ifdef CONFIG_WEB100_STATS
+				web100_stats_establish(sk);
+#endif
 
 				/* Note, that this wakeup is only for marginal
 				 * crossed SYN case. Passively open sockets

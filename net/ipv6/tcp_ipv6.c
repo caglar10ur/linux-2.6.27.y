@@ -312,6 +312,11 @@ static int tcp_v6_connect(struct sock *sk, struct sockaddr *uaddr,
 							     inet->sport,
 							     inet->dport);
 
+	WEB100_VAR_SET(tp, SndISS, tp->write_seq);
+	WEB100_VAR_SET(tp, SndMax, tp->write_seq);
+	WEB100_VAR_SET(tp, SndNxt, tp->write_seq);
+	WEB100_VAR_SET(tp, SndUna, tp->write_seq);
+	
 	err = tcp_connect(sk);
 	if (err)
 		goto late_failure;
@@ -1441,6 +1446,13 @@ static struct sock * tcp_v6_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
 	newsk = tcp_create_openreq_child(sk, req, skb);
 	if (newsk == NULL)
 		goto out;
+#ifdef CONFIG_WEB100_STATS
+	if (web100_stats_create(newsk)) {
+		sk_free(newsk);
+		goto out;
+	}
+	tcp_sk(newsk)->tcp_stats->wc_vars.LocalAddressType = WC_ADDRTYPE_IPV6;
+#endif
 
 	/*
 	 * No need to charge this sock to the relevant IPv6 refcnt debug socks
@@ -1754,6 +1766,7 @@ process:
 	skb->dev = NULL;
 
 	bh_lock_sock_nested(sk);
+	WEB100_UPDATE_FUNC(tcp_sk(sk), web100_update_segrecv(tcp_sk(sk), skb));
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {
 #ifdef CONFIG_NET_DMA
@@ -1768,6 +1781,7 @@ process:
 		}
 	} else
 		sk_add_backlog(sk, skb);
+	WEB100_UPDATE_FUNC(tcp_sk(sk), web100_update_cwnd(tcp_sk(sk)));
 	bh_unlock_sock(sk);
 
 	sock_put(sk);
@@ -1946,6 +1960,16 @@ static int tcp_v6_init_sock(struct sock *sk)
 	sk->sk_sndbuf = sysctl_tcp_wmem[1];
 	sk->sk_rcvbuf = sysctl_tcp_rmem[1];
 
+#ifdef CONFIG_WEB100_STATS
+	{
+		int err;
+		if ((err = web100_stats_create(sk))) {
+			return err;
+		}
+		tcp_sk(sk)->tcp_stats->wc_vars.LocalAddressType = WC_ADDRTYPE_IPV6;
+	}
+#endif
+	
 	atomic_inc(&tcp_sockets_allocated);
 
 	return 0;

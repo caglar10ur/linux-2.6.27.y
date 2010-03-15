@@ -1,0 +1,33 @@
+Web100 Locking Model for Linux 2.4
+John Heffner <jheffner@psc.edu>
+August 2, 2001
+
+
+1. Lookup Structures
+
+The connections entries are kept linked together simultaneously in a table
+and in a list.  Only entries in these structures can be looked up.  To
+protect these lookup structures, we have a single global reader-writer
+spinlock, web100_linkage_lock.  Since we grab the lock both from user space
+and in the bottom half, we must do a [read/write]_lock_bh.  As this disables
+the local BH's, this lock should *not* be held for very long.
+
+
+2. Data Integrity
+
+The statistics are protected by the sock's lock.  Any code modifying or
+reading the statistics should hold the sock lock while doing so.  We assume
+that if the socket is gone, the statistics should not be modified, so
+readers need not hold any lock.
+
+
+3. Statistics Destruction
+
+A statistics structure keeps a count of the number of references to it,
+wc_users.  When a lookup is performed, the reference count should be
+incremented (while the linkage lock is held) by calling web100_stats_use. 
+When the reference is no longer needed, decrement the count by calling
+web100_stats_unuse.  The latter function will free the statistics when there
+are no remaining references.  The lookup structures keep one reference.  The
+sock also keeps one, since the sock may be destroyed before it ever enters
+the ESTABLISHED state.

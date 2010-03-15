@@ -297,7 +297,8 @@ void tcp_slow_start(struct tcp_sock *tp)
 		return;
 
 	if (sysctl_tcp_max_ssthresh > 0 && tp->snd_cwnd > sysctl_tcp_max_ssthresh)
-		cnt = sysctl_tcp_max_ssthresh >> 1;	/* limited slow start */
+		/* limited slow start */
+		cnt = NET100_WAD(tp, WAD_MaxSsthresh, sysctl_tcp_max_ssthresh) >> 1;
 	else
 		cnt = tp->snd_cwnd;			/* exponential increase */
 
@@ -333,8 +334,10 @@ void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 rtt, u32 in_flight,
 		return;
 
 	/* In "safe" area, increase. */
-	if (tp->snd_cwnd <= tp->snd_ssthresh)
+        if (tp->snd_cwnd <= tp->snd_ssthresh) {
 		tcp_slow_start(tp);
+		WEB100_VAR_INC(tp, SlowStart);
+	}
 
 	/* In dangerous area, increase slowly. */
 	else if (sysctl_tcp_abc) {
@@ -346,6 +349,7 @@ void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 rtt, u32 in_flight,
 			if (tp->snd_cwnd < tp->snd_cwnd_clamp)
 				tp->snd_cwnd++;
 		}
+		WEB100_VAR_INC(tp, CongAvoid);
 	} else {
 		/* In theory this is tp->snd_cwnd += 1 / tp->snd_cwnd */
 		if (tp->snd_cwnd_cnt >= tp->snd_cwnd) {
@@ -354,6 +358,7 @@ void tcp_reno_cong_avoid(struct sock *sk, u32 ack, u32 rtt, u32 in_flight,
 			tp->snd_cwnd_cnt = 0;
 		} else
 			tp->snd_cwnd_cnt++;
+		WEB100_VAR_INC(tp, CongAvoid);
 	}
 }
 EXPORT_SYMBOL_GPL(tcp_reno_cong_avoid);
