@@ -47,6 +47,8 @@ static inline uint64_t __nxf_init_set(void) {
 #define NXC_TUN_CREATE		0x00000001
 
 #define NXC_RAW_ICMP		0x00000100
+#define NXC_RAW_SOCKET		0x00000200
+#define NXC_RAW_SEND		0x00000400
 
 
 /* address types */

@@ -444,6 +444,19 @@ set_sndbuf:
 		}
 		goto set_sndbuf;
 
+	case SO_SETXID:
+		if (current_vx_info()) {
+			ret = -EPERM;
+			break;
+		}
+		if (val < 0 || val > MAX_S_CONTEXT) {
+			ret = -EINVAL;
+			break;
+		}
+		sk->sk_xid = val;
+		sk->sk_nid = val;
+		break;
+
 	case SO_RCVBUF:
 		/* Don't error on this BSD doesn't and if you think
 		   about it this is right. Otherwise apps have to
@@ -573,7 +586,7 @@ set_rcvbuf:
 		char devname[IFNAMSIZ];
 
 		/* Sorry... */
-		if (!capable(CAP_NET_RAW)) {
+		if (!nx_capable(CAP_NET_RAW, NXC_RAW_SOCKET)) {
 			ret = -EPERM;
 			break;
 		}

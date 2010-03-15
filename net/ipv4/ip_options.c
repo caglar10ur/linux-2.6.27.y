@@ -409,7 +409,7 @@ int ip_options_compile(struct ip_options * opt, struct sk_buff * skb)
 					optptr[2] += 8;
 					break;
 				      default:
-					if (!skb && !capable(CAP_NET_RAW)) {
+					if (!skb && !nx_capable(CAP_NET_RAW, NXC_RAW_SOCKET)) {
 						pp_ptr = optptr + 3;
 						goto error;
 					}
@@ -445,7 +445,7 @@ int ip_options_compile(struct ip_options * opt, struct sk_buff * skb)
 				opt->router_alert = optptr - iph;
 			break;
 		      case IPOPT_CIPSO:
-			if ((!skb && !capable(CAP_NET_RAW)) || opt->cipso) {
+			if ((!skb && !nx_capable(CAP_NET_RAW, NXC_RAW_SOCKET)) || opt->cipso) {
 				pp_ptr = optptr;
 				goto error;
 			}
@@ -458,7 +458,7 @@ int ip_options_compile(struct ip_options * opt, struct sk_buff * skb)
 		      case IPOPT_SEC:
 		      case IPOPT_SID:
 		      default:
-			if (!skb && !capable(CAP_NET_RAW)) {
+			if (!skb && !nx_capable(CAP_NET_RAW, NXC_RAW_SOCKET)) {
 				pp_ptr = optptr;
 				goto error;
 			}
