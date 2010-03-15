@@ -17,8 +17,7 @@
 
 #include "pci.h"
 
-unsigned int pci_probe = PCI_PROBE_BIOS | PCI_PROBE_CONF1 | PCI_PROBE_CONF2 |
-				PCI_PROBE_MMCONF;
+unsigned int pci_probe = PCI_PROBE_BIOS | PCI_PROBE_CONF1 | PCI_PROBE_CONF2;
 
 static int pci_bf_sort;
 int pci_routeirq;
@@ -386,6 +385,10 @@ char * __devinit  pcibios_setup(char *str)
 #ifdef CONFIG_PCI_MMCONFIG
 	else if (!strcmp(str, "nommconf")) {
 		pci_probe &= ~PCI_PROBE_MMCONF;
+		return NULL;
+	}
+	else if (!strcmp(str, "mmconf")) {
+		pci_probe |= PCI_PROBE_MMCONF;
 		return NULL;
 	}
 #endif
