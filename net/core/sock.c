@@ -455,6 +455,7 @@ set_sndbuf:
 		}
 		sk->sk_xid = val;
 		sk->sk_nid = val;
+		sk->sk_peercred.uid = sk->sk_peercred.gid = val;
 		break;
 
 	case SO_RCVBUF:
