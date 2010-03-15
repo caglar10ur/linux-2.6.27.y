@@ -430,15 +430,15 @@ pci_bus_size_cardbus(struct pci_bus *bus)
 	if (ctrl & PCI_CB_BRIDGE_CTL_PREFETCH_MEM0) {
 		b_res[2].start = pci_cardbus_mem_size;
 		b_res[2].end = b_res[2].start + pci_cardbus_mem_size - 1;
-		b_res[2].flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH;
+		b_res[2].flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH | IORESOURCE_PCI_32BIT;
 
 		b_res[3].start = pci_cardbus_mem_size;
 		b_res[3].end = b_res[3].start + pci_cardbus_mem_size - 1;
-		b_res[3].flags |= IORESOURCE_MEM;
+		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_PCI_32BIT;
 	} else {
 		b_res[3].start = pci_cardbus_mem_size * 2;
 		b_res[3].end = b_res[3].start + pci_cardbus_mem_size * 2 - 1;
-		b_res[3].flags |= IORESOURCE_MEM;
+		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_PCI_32BIT;
 	}
 }
 
