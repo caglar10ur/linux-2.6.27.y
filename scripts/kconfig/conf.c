@@ -21,6 +21,8 @@ enum {
 	ask_all,
 	ask_new,
 	ask_silent,
+	dont_ask,
+	dont_ask_dont_tell,
 	set_default,
 	set_yes,
 	set_mod,
@@ -36,6 +38,8 @@ static char line[128];
 static struct menu *rootEntry;
 
 static char nohelp_text[] = N_("Sorry, no help available for this option yet.\n");
+
+static int return_value = 0;
 
 static void strip(char *str)
 {
@@ -102,6 +106,13 @@ static int conf_askvalue(struct symbol *sym, const char *def)
 	case ask_all:
 		fflush(stdout);
 		fgets(line, 128, stdin);
+		return 1;
+	case dont_ask:
+		if (!sym_has_value(sym)) {
+			fprintf(stderr, "CONFIG_%s\n", sym->name);
+			return_value++;
+		}
+	case dont_ask_dont_tell:
 		return 1;
 	case set_default:
 		printf("%s\n", def);
@@ -349,6 +360,11 @@ static int conf_choice(struct menu *menu)
 			printf("?");
 		printf("]: ");
 		switch (input_mode) {
+		case dont_ask:
+		case dont_ask_dont_tell:
+			cnt = def;
+			printf("%d\n", cnt);
+			break;
 		case ask_new:
 		case ask_silent:
 			if (!is_new) {
@@ -485,6 +501,10 @@ static void check_conf(struct menu *menu)
 			if (!conf_cnt++)
 				printf(_("*\n* Restart config...\n*\n"));
 			rootEntry = menu_get_parent_menu(menu);
+			if (input_mode == dont_ask
+			    || input_mode == dont_ask_dont_tell)
+				fprintf(stderr,"CONFIG_%s\n",sym->name);
+			else
 			conf(rootEntry);
 		}
 	}
@@ -503,6 +523,12 @@ int main(int ac, char **av)
 		switch (av[i++][1]) {
 		case 'o':
 			input_mode = ask_new;
+			break;
+		case 'b':
+			input_mode = dont_ask;
+			break;
+		case 'B':
+			input_mode = dont_ask_dont_tell;
 			break;
 		case 's':
 			input_mode = ask_silent;
@@ -570,6 +596,8 @@ int main(int ac, char **av)
 		}
 	case ask_all:
 	case ask_new:
+	case dont_ask:
+	case dont_ask_dont_tell:
 		conf_read(NULL);
 		break;
 	case set_no:
@@ -616,7 +644,8 @@ int main(int ac, char **av)
 	do {
 		conf_cnt = 0;
 		check_conf(&rootmenu);
-	} while (conf_cnt);
+ 	} while (conf_cnt && (input_mode != dont_ask
+			      && input_mode != dont_ask_dont_tell));
 	if (conf_write(NULL)) {
 		fprintf(stderr, _("\n*** Error during writing of the kernel configuration.\n\n"));
 		return 1;
@@ -627,5 +656,5 @@ skip_check:
 		return 1;
 	}
 
-	return 0;
+	return return_value;
 }
