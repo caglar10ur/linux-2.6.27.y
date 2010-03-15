@@ -82,6 +82,7 @@ enum {
 
 static match_table_t tokens = {
 	{Opt_tag, "tag"},
+	{Opt_tag, "tagxid"},
 	{Opt_notag, "notag"},
 	{Opt_err, NULL}
 };

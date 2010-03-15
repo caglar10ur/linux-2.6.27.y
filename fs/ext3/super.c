@@ -725,6 +725,7 @@ static match_table_t tokens = {
 	{Opt_usrquota, "usrquota"},
 	{Opt_barrier, "barrier=%u"},
 	{Opt_tag, "tag"},
+	{Opt_tag, "tagxid"},
 	{Opt_notag, "notag"},
 	{Opt_tagid, "tagid=%u"},
 	{Opt_err, NULL},

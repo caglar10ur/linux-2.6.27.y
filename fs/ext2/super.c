@@ -350,6 +350,7 @@ static match_table_t tokens = {
 	{Opt_noacl, "noacl"},
 	{Opt_xip, "xip"},
 	{Opt_tag, "tag"},
+	{Opt_tag, "tagxid"},
 	{Opt_notag, "notag"},
 	{Opt_tagid, "tagid=%u"},
 	{Opt_grpquota, "grpquota"},
