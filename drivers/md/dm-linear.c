@@ -123,6 +123,7 @@ static struct target_type linear_target = {
 	.map    = linear_map,
 	.status = linear_status,
 	.ioctl  = linear_ioctl,
+	.features = DM_TARGET_SUPPORTS_BARRIERS,
 };
 
 int __init dm_linear_init(void)

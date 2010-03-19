@@ -89,9 +89,15 @@ int dm_get_device(struct dm_target *ti, const char *path, sector_t start,
 void dm_put_device(struct dm_target *ti, struct dm_dev *d);
 
 /*
+ * Target features
+ */
+#define DM_TARGET_SUPPORTS_BARRIERS 0x00000001
+
+/*
  * Information about a target type
  */
 struct target_type {
+	uint64_t features;
 	const char *name;
 	struct module *module;
 	unsigned version[3];
