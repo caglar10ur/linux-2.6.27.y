@@ -101,7 +101,7 @@ struct ext4_inode_info {
 	struct ext4_block_alloc_info *i_block_alloc_info;
 
 	ext4_lblk_t		i_dir_start_lookup;
-#ifdef CONFIG_EXT4DEV_FS_XATTR
+#ifdef CONFIG_EXT4_FS_XATTR
 	/*
 	 * Extended attributes can be read independently of the main file
 	 * data. Taking i_mutex even when reading would cause contention
@@ -111,7 +111,7 @@ struct ext4_inode_info {
 	 */
 	struct rw_semaphore xattr_sem;
 #endif
-#ifdef CONFIG_EXT4DEV_FS_POSIX_ACL
+#ifdef CONFIG_EXT4_FS_POSIX_ACL
 	struct posix_acl	*i_acl;
 	struct posix_acl	*i_default_acl;
 #endif
