@@ -1588,11 +1588,12 @@ nofail_alloc:
 		if (page)
 			goto got_pg;
 	} else if ((gfp_mask & __GFP_FS) && !(gfp_mask & __GFP_NORETRY)) {
+#ifdef CONFIG_OOM_KILLER
 		if (!try_set_zone_oom(zonelist, gfp_mask)) {
 			schedule_timeout_uninterruptible(1);
 			goto restart;
 		}
-
+#endif
 		/*
 		 * Go through the zonelist yet one more time, keep
 		 * very high watermark here, this is only to catch
@@ -1603,18 +1604,24 @@ nofail_alloc:
 			order, zonelist, high_zoneidx,
 			ALLOC_WMARK_HIGH|ALLOC_CPUSET);
 		if (page) {
+#ifdef CONFIG_OOM_KILLER
 			clear_zonelist_oom(zonelist, gfp_mask);
+#endif
 			goto got_pg;
 		}
 
 		/* The OOM killer will not help higher order allocs so fail */
 		if (order > PAGE_ALLOC_COSTLY_ORDER) {
+#ifdef CONFIG_OOM_KILLER
 			clear_zonelist_oom(zonelist, gfp_mask);
+#endif
 			goto nopage;
 		}
 
 		out_of_memory(zonelist, gfp_mask, order);
+#ifdef CONFIG_OOM_KILLER
 		clear_zonelist_oom(zonelist, gfp_mask);
+#endif
 		goto restart;
 	}
 
