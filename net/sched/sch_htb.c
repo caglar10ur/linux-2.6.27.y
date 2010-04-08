@@ -51,7 +51,7 @@
     one less than their parent.
 */
 
-static int htb_hysteresis __read_mostly = 0; /* whether to use mode hysteresis for speedup */
+static int htb_hysteresis __read_mostly = 1; /* whether to use mode hysteresis for speedup */
 #define HTB_VER 0x30011		/* major must be matched with number suplied by TC as version */
 
 #if HTB_VER >> 16 != TC_HTB_PROTOVER
