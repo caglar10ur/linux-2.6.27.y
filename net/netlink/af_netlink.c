@@ -437,6 +437,11 @@ static int netlink_create(struct net *net, struct socket *sock, int protocol)
 	if (protocol < 0 || protocol >= MAX_LINKS)
 		return -EPROTONOSUPPORT;
 
+#ifndef CONFIG_AUDIT
+	if (protocol == NETLINK_AUDIT)
+		return -EPROTONOSUPPORT;
+#endif
+
 	netlink_lock_table();
 #ifdef CONFIG_KMOD
 	if (!nl_table[protocol].registered) {
