@@ -175,6 +175,7 @@ static match_table_t tokens = {
 	{Opt_localflocks, "localflocks"},
 	{Opt_stack, "cluster_stack=%s"},
 	{Opt_tag, "tag"},
+	{Opt_tag, "tagxid"},
 	{Opt_notag, "notag"},
 	{Opt_tagid, "tagid=%u"},
 	{Opt_err, NULL}
