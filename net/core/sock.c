@@ -956,6 +956,8 @@ struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
 		sk->sk_prot = sk->sk_prot_creator = prot;
 		sock_lock_init(sk);
 		sock_net_set(sk, get_net(net));
+        if (!in_interrupt())
+            sk->sk_mark = nx_current_nid();
 	}
 
 	return sk;

@@ -45,6 +45,8 @@ static void dump_packet(const struct nf_loginfo *info,
 	else
 		logflags = NF_LOG_MASK;
 
+	printk("TAG=%d ", skb->skb_tag);
+
 	ih = skb_header_pointer(skb, iphoff, sizeof(_iph), &_iph);
 	if (ih == NULL) {
 		printk("TRUNCATED");

@@ -55,6 +55,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/init.h>
 #include <linux/scatterlist.h>
+#include <linux/vs_network.h>
 
 #include <net/protocol.h>
 #include <net/dst.h>
@@ -197,6 +198,7 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	skb->data = data;
 	skb_reset_tail_pointer(skb);
 	skb->end = skb->tail + size;
+	if (!in_interrupt()) skb->skb_tag = nx_current_nid(); else skb->skb_tag = 0;
 	/* make sure we initialize shinfo sequentially */
 	shinfo = skb_shinfo(skb);
 	atomic_set(&shinfo->dataref, 1);
@@ -448,6 +450,7 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 #endif
 #endif
 	new->vlan_tci		= old->vlan_tci;
+	new->skb_tag		= old->skb_tag;
 
 	skb_copy_secmark(new, old);
 }
@@ -477,6 +480,8 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
 	C(do_not_encrypt);
 #endif
 	atomic_set(&n->users, 1);
+
+	/* Sapan: Cloned skbs aren't owned by anyone. Let the cloner decide who it belongs to. */
 
 	atomic_inc(&(skb_shinfo(skb)->dataref));
 	skb->cloned = 1;

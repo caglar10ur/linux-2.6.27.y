@@ -330,6 +330,7 @@ struct sk_buff {
 #endif
 
 	__u32			mark;
+#define skb_tag			mark
 
 	__u16			vlan_tci;
 
