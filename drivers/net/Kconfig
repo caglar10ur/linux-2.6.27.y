@@ -39,6 +39,9 @@ config IFB
 	  'ifb1' etc.
 	  Look at the iproute2 documentation directory for usage etc
 
+config EGRE
+	tristate "EGRE module for Ethernet over GRE Tunnels"
+      
 config DUMMY
 	tristate "Dummy net driver support"
 	---help---
