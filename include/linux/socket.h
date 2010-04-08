@@ -296,6 +296,8 @@ struct ucred {
 #define SOL_PPPOL2TP	273
 #define SOL_BLUETOOTH	274
 
+#define SO_SETXID	SO_PEERCRED
+
 /* IPX options */
 #define IPX_TYPE	1
 
