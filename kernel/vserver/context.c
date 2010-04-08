@@ -419,7 +419,7 @@ int get_xid_list(int index, unsigned int *xids, int size)
 	int hindex, nr_xids = 0;
 
 	/* only show current and children */
-	if (!vx_check(0, VS_ADMIN | VS_WATCH)) {
+	if (!vx_check(0, VS_ADMIN | VS_WATCH) && vx_flags(VXF_HIDE_VINFO, 0)) {
 		if (index > 0)
 			return 0;
 		xids[nr_xids] = vx_current_xid();
