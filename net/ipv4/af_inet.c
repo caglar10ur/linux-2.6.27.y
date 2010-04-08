@@ -331,6 +331,9 @@ lookup_protocol:
 	if ((protocol == IPPROTO_ICMP) &&
 		nx_capable(answer->capability, NXC_RAW_ICMP))
 		goto override;
+	if (sock->type == SOCK_RAW &&
+		nx_capable(answer->capability, NXC_RAW_SOCKET))
+		goto override;
 	if (answer->capability > 0 && !capable(answer->capability))
 		goto out_rcu_unlock;
 override:

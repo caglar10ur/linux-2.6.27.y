@@ -381,7 +381,7 @@ static int sock_bindtodevice(struct sock *sk, char __user *optval, int optlen)
 
 	/* Sorry... */
 	ret = -EPERM;
-	if (!capable(CAP_NET_RAW))
+	if (!nx_capable(CAP_NET_RAW, NXC_RAW_SOCKET))
 		goto out;
 
 	ret = -EINVAL;
@@ -514,6 +514,19 @@ set_sndbuf:
 			break;
 		}
 		goto set_sndbuf;
+
+	case SO_SETXID:
+		if (current_vx_info()) {
+			ret = -EPERM;
+			break;
+		}
+		if (val < 0 || val > MAX_S_CONTEXT) {
+			ret = -EINVAL;
+			break;
+		}
+		sk->sk_xid = val;
+		sk->sk_nid = val;
+		break;
 
 	case SO_RCVBUF:
 		/* Don't error on this BSD doesn't and if you think

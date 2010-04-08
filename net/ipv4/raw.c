@@ -108,7 +108,7 @@ void raw_unhash_sk(struct sock *sk)
 EXPORT_SYMBOL_GPL(raw_unhash_sk);
 
 static struct sock *__raw_v4_lookup(struct net *net, struct sock *sk,
-		unsigned short num, __be32 raddr, __be32 laddr, int dif)
+		unsigned short num, __be32 raddr, __be32 laddr, int dif, int tag)
 {
 	struct hlist_node *node;
 
@@ -117,6 +117,7 @@ static struct sock *__raw_v4_lookup(struct net *net, struct sock *sk,
 
 		if (net_eq(sock_net(sk), net) && inet->num == num	&&
 		    !(inet->daddr && inet->daddr != raddr) 		&&
+		    (!sk->sk_nx_info || tag == 1 || sk->sk_nid == tag)	&&
 		    v4_sock_addr_match(sk->sk_nx_info, inet, laddr)	&&
 		    !(sk->sk_bound_dev_if && sk->sk_bound_dev_if != dif))
 			goto found; /* gotcha */
@@ -169,7 +170,7 @@ static int raw_v4_input(struct sk_buff *skb, struct iphdr *iph, int hash)
 	net = dev_net(skb->dev);
 	sk = __raw_v4_lookup(net, __sk_head(head), iph->protocol,
 			     iph->saddr, iph->daddr,
-			     skb->dev->ifindex);
+			     skb->dev->ifindex, skb->skb_tag);
 
 	while (sk) {
 		delivered = 1;
@@ -182,7 +183,7 @@ static int raw_v4_input(struct sk_buff *skb, struct iphdr *iph, int hash)
 		}
 		sk = __raw_v4_lookup(net, sk_next(sk), iph->protocol,
 				     iph->saddr, iph->daddr,
-				     skb->dev->ifindex);
+				     skb->dev->ifindex, skb->skb_tag);
 	}
 out:
 	read_unlock(&raw_v4_hashinfo.lock);
@@ -277,8 +278,8 @@ void raw_icmp_error(struct sk_buff *skb, int protocol, u32 info)
 		net = dev_net(skb->dev);
 
 		while ((raw_sk = __raw_v4_lookup(net, raw_sk, protocol,
-						iph->daddr, iph->saddr,
-						skb->dev->ifindex)) != NULL) {
+			iph->daddr, iph->saddr, skb->dev->ifindex,
+			skb->skb_tag)) != NULL) {
 			raw_err(raw_sk, skb, info);
 			raw_sk = sk_next(raw_sk);
 			iph = (struct iphdr *)skb->data;
@@ -373,7 +374,7 @@ static int raw_send_hdrinc(struct sock *sk, void *from, size_t length,
 			skb_transport_header(skb))->type);
 
 	err = -EPERM;
-	if (!nx_check(0, VS_ADMIN) && !capable(CAP_NET_RAW) &&
+	if (!nx_check(0, VS_ADMIN) && !nx_capable(CAP_NET_RAW, NXC_RAW_SOCKET) &&
 		sk->sk_nx_info &&
 		!v4_addr_in_nx_info(sk->sk_nx_info, iph->saddr, NXA_MASK_BIND))
 		goto error_free;
