@@ -27,6 +27,7 @@
 #include <linux/workqueue.h>
 #include <linux/blktrace_api.h>
 #include <scsi/sg.h>		/* for struct sg_iovec */
+#include <linux/arrays.h>
 
 static struct kmem_cache *bio_slab __read_mostly;
 
@@ -43,6 +44,7 @@ static struct biovec_slab bvec_slabs[BIOVEC_NR_POOLS] __read_mostly = {
 	BV(1), BV(4), BV(16), BV(64), BV(128), BV(BIO_MAX_PAGES),
 };
 #undef BV
+
 
 /*
  * fs_bio_set is the bio_set containing bio and iovec memory pools used by
@@ -1183,6 +1185,17 @@ void bio_check_pages_dirty(struct bio *bio)
 	}
 }
 
+#ifdef CONFIG_CHOPSTIX
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie;
+	unsigned count;
+	unsigned char reason;
+};
+
+extern void (*rec_event)(void *,unsigned int);
+#endif
+
 /**
  * bio_endio - end I/O on a bio
  * @bio:	bio
@@ -1203,6 +1216,24 @@ void bio_endio(struct bio *bio, int error)
 		clear_bit(BIO_UPTODATE, &bio->bi_flags);
 	else if (!test_bit(BIO_UPTODATE, &bio->bi_flags))
 		error = -EIO;
+
+#ifdef CONFIG_CHOPSTIX
+		if (rec_event) {
+			struct event event;
+			struct event_spec espec;
+			unsigned long eip;
+			
+			espec.reason = 1;/*response */
+
+			eip = bio->bi_end_io;
+			event.event_data=&espec;
+			espec.pc=eip;
+			event.event_type=3; 
+			/* index in the event array currently set up */
+			/* make sure the counters are loaded in the order we want them to show up*/ 
+			(*rec_event)(&event, bio->bi_size);
+		}
+#endif
 
 	if (bio->bi_end_io)
 		bio->bi_end_io(bio, error);

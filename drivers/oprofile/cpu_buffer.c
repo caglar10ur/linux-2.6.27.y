@@ -21,6 +21,7 @@
 #include <linux/oprofile.h>
 #include <linux/vmalloc.h>
 #include <linux/errno.h>
+#include <linux/arrays.h>
  
 #include "event_buffer.h"
 #include "cpu_buffer.h"
@@ -147,6 +148,17 @@ static void increment_head(struct oprofile_cpu_buffer * b)
 		b->head_pos = 0;
 }
 
+#ifdef CONFIG_CHOPSTIX
+
+struct event_spec {
+	unsigned int pc;
+	unsigned long dcookie;
+	unsigned count;
+};
+
+extern void (*rec_event)(void *,unsigned int);
+#endif
+
 static inline void
 add_sample(struct oprofile_cpu_buffer * cpu_buf,
            unsigned long pc, unsigned long event)
@@ -251,7 +263,24 @@ void oprofile_add_sample(struct pt_regs * const regs, unsigned long event)
 	int is_kernel = !user_mode(regs);
 	unsigned long pc = profile_pc(regs);
 
+#ifdef CONFIG_CHOPSTIX
+	if (rec_event) {
+		struct event esig;
+		struct event_spec espec;
+		esig.task = current;
+		espec.pc=pc;
+		espec.count=1;
+		esig.event_data=&espec;
+		esig.event_type=event; /* index in the event array currently set up */
+					/* make sure the counters are loaded in the order we want them to show up*/ 
+		(*rec_event)(&esig, 1);
+	}
+	else {
+		oprofile_add_ext_sample(pc, regs, event, is_kernel);
+	}
+#else
 	oprofile_add_ext_sample(pc, regs, event, is_kernel);
+#endif
 }
 
 void oprofile_add_pc(unsigned long pc, int is_kernel, unsigned long event)

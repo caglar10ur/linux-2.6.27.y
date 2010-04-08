@@ -1134,6 +1134,11 @@ struct task_struct {
 	cputime_t utime, stime, utimescaled, stimescaled;
 	cputime_t gtime;
 	cputime_t prev_utime, prev_stime;
+
+    #ifdef CONFIG_CHOPSTIX
+            unsigned long last_interrupted, last_ran_j;
+    #endif
+
 	unsigned long nvcsw, nivcsw; /* context switch counts */
 	struct timespec start_time; 		/* monotonic time */
 	struct timespec real_start_time;	/* boot based time */

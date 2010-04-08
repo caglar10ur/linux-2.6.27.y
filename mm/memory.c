@@ -61,6 +61,7 @@
 
 #include <linux/swapops.h>
 #include <linux/elf.h>
+#include <linux/arrays.h>
 
 #include "internal.h"
 
@@ -2784,6 +2785,16 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_CHOPSTIX
+extern void (*rec_event)(void *,unsigned int);
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie; 
+	unsigned count;
+	unsigned char reason;
+};
+#endif
+
 /*
  * By the time we get here, we already hold the mm semaphore
  */
@@ -2812,6 +2823,24 @@ int handle_mm_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	pte = pte_alloc_map(mm, pmd, address);
 	if (!pte)
 		return VM_FAULT_OOM;
+
+#ifdef CONFIG_CHOPSTIX
+	if (rec_event) {
+		struct event event;
+		struct event_spec espec;
+		struct pt_regs *regs;
+		unsigned int pc;
+		regs = task_pt_regs(current);
+		pc = regs->ip & (unsigned int) ~4095;
+
+		espec.reason = 0; /* alloc */
+		event.event_data=&espec;
+		event.task = current;
+		espec.pc=pc;
+		event.event_type=6; 
+		(*rec_event)(&event, 1);
+	}
+#endif
 
 	return handle_pte_fault(mm, vma, address, pte, pmd, write_access);
 }

@@ -30,8 +30,19 @@
 #include <linux/cpu.h>
 #include <linux/blktrace_api.h>
 #include <linux/fault-inject.h>
+#include <linux/arrays.h>
 
 #include "blk.h"
+
+#ifdef CONFIG_CHOPSTIX
+extern void (*rec_event)(void *,unsigned int);
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie;
+	unsigned count;
+	unsigned char reason;
+};
+#endif
 
 static int __make_request(struct request_queue *q, struct bio *bio);
 
@@ -1413,6 +1424,24 @@ end_io:
 			err = -EOPNOTSUPP;
 			goto end_io;
 		}
+
+#ifdef CONFIG_CHOPSTIX
+		if (rec_event) {
+			struct event event;
+			struct event_spec espec;
+			unsigned long eip;
+			
+			espec.reason = 0;/*request */
+
+			eip = bio->bi_end_io;
+			event.event_data=&espec;
+			espec.pc=eip;
+			event.event_type=3; 
+			/* index in the event array currently set up */
+			/* make sure the counters are loaded in the order we want them to show up*/ 
+			(*rec_event)(&event, bio->bi_size);
+		}
+#endif
 
 		ret = q->make_request_fn(q, bio);
 	} while (ret);

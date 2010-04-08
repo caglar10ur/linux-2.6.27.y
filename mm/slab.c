@@ -110,6 +110,7 @@
 #include	<linux/fault-inject.h>
 #include	<linux/rtmutex.h>
 #include	<linux/reciprocal_div.h>
+#include <linux/arrays.h>
 #include	<linux/debugobjects.h>
 
 #include	<asm/cacheflush.h>
@@ -247,6 +248,16 @@ struct slab_rcu {
 	struct kmem_cache *cachep;
 	void *addr;
 };
+
+#ifdef CONFIG_CHOPSTIX
+extern void (*rec_event)(void *,unsigned int);
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie; 
+	unsigned count;
+	unsigned char reason;
+};
+#endif
 
 /*
  * struct array_cache
@@ -3469,6 +3480,19 @@ __cache_alloc(struct kmem_cache *cachep, gfp_t flags, void *caller)
 	local_irq_restore(save_flags);
 	objp = cache_alloc_debugcheck_after(cachep, flags, objp, caller);
 	prefetchw(objp);
+#ifdef CONFIG_CHOPSTIX
+	if (rec_event && objp) {
+		struct event event;
+		struct event_spec espec;
+
+		espec.reason = 0; /* alloc */
+		event.event_data=&espec;
+		event.task = current;
+		espec.pc=caller;
+		event.event_type=4; 
+		(*rec_event)(&event, cachep->buffer_size);
+	}
+#endif
 
 	if (unlikely((flags & __GFP_ZERO) && objp))
 		memset(objp, 0, obj_size(cachep));
@@ -3578,12 +3602,26 @@ free_done:
  * Release an obj back to its cache. If the obj has a constructed state, it must
  * be in this state _before_ it is released.  Called with disabled ints.
  */
-static inline void __cache_free(struct kmem_cache *cachep, void *objp)
+static inline void __cache_free(struct kmem_cache *cachep, void *objp, void *caller)
 {
 	struct array_cache *ac = cpu_cache_get(cachep);
 
 	check_irq_off();
-	objp = cache_free_debugcheck(cachep, objp, __builtin_return_address(0));
+ 	objp = cache_free_debugcheck(cachep, objp, caller);
+ #ifdef CONFIG_CHOPSTIX
+  	if (rec_event && objp) {
+  		struct event event;
+  		struct event_spec espec;
+  
+  		espec.reason = 1; /* free */
+  		event.event_data=&espec;
+  		event.task = current;
+  		espec.pc=caller;
+  		event.event_type=4; 
+  		(*rec_event)(&event, cachep->buffer_size);
+  	}
+ #endif
+
 	vx_slab_free(cachep);
 
 	/*
@@ -3741,10 +3779,17 @@ void *__kmalloc_track_caller(size_t size, gfp_t flags, void *caller)
 EXPORT_SYMBOL(__kmalloc_track_caller);
 
 #else
+#ifdef CONFIG_CHOPSTIX
+void *__kmalloc(size_t size, gfp_t flags)
+{
+	return __do_kmalloc(size, flags, __builtin_return_address(0));
+}
+#else
 void *__kmalloc(size_t size, gfp_t flags)
 {
 	return __do_kmalloc(size, flags, NULL);
 }
+#endif
 EXPORT_SYMBOL(__kmalloc);
 #endif
 
@@ -3764,7 +3809,7 @@ void kmem_cache_free(struct kmem_cache *cachep, void *objp)
 	debug_check_no_locks_freed(objp, obj_size(cachep));
 	if (!(cachep->flags & SLAB_DEBUG_OBJECTS))
 		debug_check_no_obj_freed(objp, obj_size(cachep));
-	__cache_free(cachep, objp);
+	__cache_free(cachep, objp,__builtin_return_address(0));
 	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(kmem_cache_free);
@@ -3790,7 +3835,7 @@ void kfree(const void *objp)
 	c = virt_to_cache(objp);
 	debug_check_no_locks_freed(objp, obj_size(c));
 	debug_check_no_obj_freed(objp, obj_size(c));
-	__cache_free(c, (void *)objp);
+	__cache_free(c, (void *)objp,__builtin_return_address(0));
 	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(kfree);

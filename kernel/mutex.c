@@ -18,6 +18,16 @@
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
 #include <linux/debug_locks.h>
+#include <linux/arrays.h>
+
+#ifdef CONFIG_CHOPSTIX
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie;
+	unsigned count;
+	unsigned char reason;
+};
+#endif
 
 /*
  * In the DEBUG case we are using the "NULL fastpath" for mutexes,
@@ -44,6 +54,9 @@ void
 __mutex_init(struct mutex *lock, const char *name, struct lock_class_key *key)
 {
 	atomic_set(&lock->count, 1);
+#ifdef CONFIG_CHOPSTIX
+	lock->owner = NULL;
+#endif
 	spin_lock_init(&lock->wait_lock);
 	INIT_LIST_HEAD(&lock->wait_list);
 
@@ -177,6 +190,25 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 		}
 		__set_task_state(task, state);
 
+#if 0 && CONFIG_CHOPSTIX
+		if (rec_event) {
+			if (lock->owner) {
+				struct event event;
+				struct event_spec espec;
+				struct task_struct *p = lock->owner->task;
+
+				espec.reason = 0; /* lock */
+				event.event_data = &espec;
+				event.task = p;
+				espec.pc = lock;
+				event.event_type = 5;
+				(*rec_event)(&event, 1);
+			} else {
+				BUG();
+			}
+		}
+#endif
+
 		/* didnt get the lock, go to sleep: */
 		spin_unlock_mutex(&lock->wait_lock, flags);
 		schedule();
@@ -188,6 +220,10 @@ done:
 	/* got the lock - rejoice! */
 	mutex_remove_waiter(lock, &waiter, task_thread_info(task));
 	debug_mutex_set_owner(lock, task_thread_info(task));
+
+#ifdef CONFIG_CHOPSTIX
+	lock->owner = task_thread_info(task);
+#endif
 
 	/* set it to 0 if there are no waiters left: */
 	if (likely(list_empty(&lock->wait_list)))
@@ -256,6 +292,25 @@ __mutex_unlock_common_slowpath(atomic_t *lock_count, int nested)
 					   struct mutex_waiter, list);
 
 		debug_mutex_wake_waiter(lock, waiter);
+
+#if 0 && CONFIG_CHOPSTIX
+		if (rec_event) {
+			if (lock->owner) {
+				struct event event;
+				struct event_spec espec;
+				struct task_struct *p = lock->owner->task;
+
+				espec.reason = 1; /* unlock */
+				event.event_data = &espec;
+				event.task = p;
+				espec.pc = lock;
+				event.event_type = 5;
+				(*rec_event)(&event, 1);
+			} else {
+				BUG();
+			}
+		}
+#endif
 
 		wake_up_process(waiter->task);
 	}

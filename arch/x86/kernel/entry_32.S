@@ -426,6 +426,34 @@ ENTRY(system_call)
 	cmpl $(nr_syscalls), %eax
 	jae syscall_badsys
 syscall_call:
+#ifdef CONFIG_CHOPSTIX
+	/* Move Chopstix syscall probe here */
+	/* Save and clobber: eax, ecx, ebp  */
+	pushl   %eax
+	pushl   %ecx
+	pushl   %ebp
+	movl    %esp, %ebp
+	subl    $SPEC_EVENT_SIZE, %esp 
+	movl    rec_event, %ecx
+	testl   %ecx, %ecx
+	jz  carry_on
+	# struct event is first, just below %ebp
+	movl    %eax, (SPEC_number-EVENT_SIZE)(%ebp)
+	leal    -SPEC_EVENT_SIZE(%ebp), %eax
+	movl    %eax, EVENT_event_data(%ebp)
+	movl    $7, EVENT_event_type(%ebp)
+	movl    rec_event, %edx
+	movl    $1, 4(%esp)
+	leal    -EVENT_SIZE(%ebp), %eax
+	movl    %eax, (%esp)
+	call    rec_event_asm 
+carry_on: 
+	addl $SPEC_EVENT_SIZE, %esp
+	popl %ebp
+	popl %ecx
+	popl %eax
+	/* End chopstix */
+#endif
 	call *sys_call_table(,%eax,4)
 	movl %eax,PT_EAX(%esp)		# store the return value
 syscall_exit:

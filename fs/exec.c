@@ -27,6 +27,7 @@
 #include <linux/fdtable.h>
 #include <linux/mm.h>
 #include <linux/stat.h>
+#include <linux/dcookies.h>
 #include <linux/fcntl.h>
 #include <linux/smp_lock.h>
 #include <linux/swap.h>
@@ -711,6 +712,13 @@ struct file *open_exec(const char *name)
 		fput(file);
 		goto out;
 	}
+
+ #ifdef CONFIG_CHOPSTIX
+    unsigned long cookie;
+    extern void (*rec_event)(void *, unsigned int);
+    if (rec_event && !nd.path.dentry->d_cookie)
+        get_dcookie(&nd.path, &cookie);
+ #endif
 
 	return file;
 

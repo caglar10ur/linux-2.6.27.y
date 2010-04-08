@@ -9,6 +9,7 @@
 #include <linux/signal.h>
 #include <linux/personality.h>
 #include <linux/suspend.h>
+#include <linux/arrays.h>
 #include <linux/kbuild.h>
 #include <asm/ucontext.h>
 #include "sigframe.h"
@@ -23,6 +24,18 @@
 
 #include <linux/lguest.h>
 #include "../../../drivers/lguest/lg.h"
+
+#ifdef CONFIG_CHOPSTIX
+#define STACKOFFSET(sym, str, mem) \
+	DEFINE(sym, offsetof(struct str, mem)-sizeof(struct str));
+
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie;
+	unsigned count;
+	unsigned int number;
+};
+#endif
 
 /* workaround for a warning with -Wmissing-prototypes */
 void foo(void);
@@ -49,6 +62,18 @@ void foo(void)
 	OFFSET(CPUINFO_x86_capability, cpuinfo_x86, x86_capability);
 	OFFSET(CPUINFO_x86_vendor_id, cpuinfo_x86, x86_vendor_id);
 	BLANK();
+
+#ifdef CONFIG_CHOPSTIX
+	STACKOFFSET(TASK_thread, task_struct, thread);
+	STACKOFFSET(THREAD_esp, thread_struct, sp);
+	STACKOFFSET(EVENT_event_data, event, event_data);
+	STACKOFFSET(EVENT_task, event, task);
+	STACKOFFSET(EVENT_event_type, event, event_type);
+	STACKOFFSET(SPEC_number, event_spec, number);
+	DEFINE(EVENT_SIZE, sizeof(struct event));
+	DEFINE(SPEC_SIZE, sizeof(struct event_spec));
+	DEFINE(SPEC_EVENT_SIZE, sizeof(struct event_spec)+sizeof(struct event));
+#endif
 
 	OFFSET(TI_task, thread_info, task);
 	OFFSET(TI_exec_domain, thread_info, exec_domain);

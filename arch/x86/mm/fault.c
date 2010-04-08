@@ -79,6 +79,16 @@ static inline int notify_page_fault(struct pt_regs *regs)
 #endif
 }
 
+#ifdef CONFIG_CHOPSTIX
+extern void (*rec_event)(void *,unsigned int);
+struct event_spec {
+	unsigned long pc;
+	unsigned long dcookie; 
+	unsigned count;
+	unsigned char reason;
+};
+#endif
+
 /*
  * X86_32
  * Sometimes AMD Athlon/Opteron CPUs report invalid exceptions on prefetch.

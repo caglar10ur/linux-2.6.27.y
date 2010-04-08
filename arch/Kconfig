@@ -13,8 +13,17 @@ config OPROFILE
 
 	  If unsure, say N.
 
+config CHOPSTIX
+ 	bool "Chopstix (PlanetLab)"
+ 	depends on MODULES && OPROFILE
+ 	help
+ 	  Chopstix allows you to monitor various events by summarizing them
+ 	  in lossy data structures and transferring these data structures
+ 	  into user space. If in doubt, say "N".
+
 config HAVE_OPROFILE
 	def_bool n
+
 
 config KPROBES
 	bool "Kprobes"
