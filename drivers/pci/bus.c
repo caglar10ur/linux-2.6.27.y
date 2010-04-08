@@ -41,6 +41,7 @@ pci_bus_alloc_resource(struct pci_bus *bus, struct resource *res,
 		void *alignf_data)
 {
 	int i, ret = -ENOMEM;
+	resource_size_t max = -1;
 
 	type_mask |= IORESOURCE_IO | IORESOURCE_MEM;
 
@@ -59,10 +60,15 @@ pci_bus_alloc_resource(struct pci_bus *bus, struct resource *res,
 		    !(res->flags & IORESOURCE_PREFETCH))
 			continue;
 
+		/* Limit address to 32 bits when requested */
+		if ((res->flags & IORESOURCE_MEM) &&
+		    (res->flags & IORESOURCE_PCI_32BIT))
+			max = (u32) -1;
+
 		/* Ok, try it out.. */
 		ret = allocate_resource(r, res, size,
 					r->start ? : min,
-					-1, align,
+					max, align,
 					alignf, alignf_data);
 		if (ret == 0)
 			break;

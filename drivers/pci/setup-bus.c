@@ -433,19 +433,23 @@ static void pci_bus_size_cardbus(struct pci_bus *bus)
 	 * If we have prefetchable memory support, allocate
 	 * two regions.  Otherwise, allocate one region of
 	 * twice the size.
+	 * Avoid 64bit address space, as cardbus devices can't handle it.
 	 */
 	if (ctrl & PCI_CB_BRIDGE_CTL_PREFETCH_MEM0) {
 		b_res[2].start = 0;
 		b_res[2].end = pci_cardbus_mem_size - 1;
-		b_res[2].flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH | IORESOURCE_SIZEALIGN;
+		b_res[2].flags |= IORESOURCE_MEM | IORESOURCE_PREFETCH |
+			IORESOURCE_SIZEALIGN | IORESOURCE_PCI_32BIT;
 
 		b_res[3].start = 0;
 		b_res[3].end = pci_cardbus_mem_size - 1;
-		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN;
+		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN |
+			IORESOURCE_PCI_32BIT;
 	} else {
 		b_res[3].start = 0;
 		b_res[3].end = pci_cardbus_mem_size * 2 - 1;
-		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN;
+		b_res[3].flags |= IORESOURCE_MEM | IORESOURCE_SIZEALIGN |
+			IORESOURCE_PCI_32BIT;
 	}
 }
 

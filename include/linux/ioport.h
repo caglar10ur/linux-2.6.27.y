@@ -101,6 +101,7 @@ struct resource_list {
 
 /* PCI control bits.  Shares IORESOURCE_BITS with above PCI ROM.  */
 #define IORESOURCE_PCI_FIXED		(1<<4)	/* Do not move resource */
+#define IORESOURCE_PCI_32BIT		(1<<5)	/* Do not use 64bit address space (for cardbus devices) */
 
 /* PC/ISA/whatever - the normal PC address spaces: IO and memory */
 extern struct resource ioport_resource;
