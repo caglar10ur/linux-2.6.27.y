@@ -11,6 +11,7 @@ enum {
 	XT_MARK_SET=0,
 	XT_MARK_AND,
 	XT_MARK_OR,
+	XT_MARK_COPYXID,
 };
 
 struct xt_mark_target_info_v1 {

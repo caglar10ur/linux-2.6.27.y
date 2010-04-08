@@ -121,6 +121,9 @@ struct nf_conn
 	/* Storage reserved for other modules: */
 	union nf_conntrack_proto proto;
 
+	/* PLANETLAB. VNET-specific */
+	int xid[IP_CT_DIR_MAX];
+
 	/* Extensions */
 	struct nf_ct_ext *ext;
 

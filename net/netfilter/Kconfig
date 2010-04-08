@@ -477,6 +477,13 @@ config NETFILTER_XT_TARGET_TCPOPTSTRIP
 	  This option adds a "TCPOPTSTRIP" target, which allows you to strip
 	  TCP options from TCP packets.
 
+config NETFILTER_XT_TARGET_SETXID
+	tristate '"SETXID" target support'
+	depends on NETFILTER_XTABLES
+	help
+	  This option adds a `SETXID' target, which allows you to alter the
+	  xid of a socket.
+
 config NETFILTER_XT_MATCH_COMMENT
 	tristate  '"comment" match support'
 	depends on NETFILTER_XTABLES

@@ -12,6 +12,7 @@
 #define IPT_MARK_SET	XT_MARK_SET
 #define IPT_MARK_AND	XT_MARK_AND
 #define	IPT_MARK_OR	XT_MARK_OR
+#define IPT_MARK_COPYXID	XT_MARK_COPYXID
 
 #define ipt_mark_target_info_v1 xt_mark_target_info_v1
 

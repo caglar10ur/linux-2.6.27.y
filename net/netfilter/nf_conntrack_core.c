@@ -595,6 +595,9 @@ init_conntrack(const struct nf_conntrack_tuple *tuple,
 	/* Overload tuple linked list to put us in unconfirmed list. */
 	hlist_add_head(&ct->tuplehash[IP_CT_DIR_ORIGINAL].hnode, &unconfirmed);
 
+	ct->xid[IP_CT_DIR_ORIGINAL] = -1;
+	ct->xid[IP_CT_DIR_REPLY] = -1;
+
 	spin_unlock_bh(&nf_conntrack_lock);
 
 	if (exp) {
