@@ -14,6 +14,7 @@
 #include <linux/hash.h>
 #include <linux/sunrpc/clnt.h>
 #include <linux/spinlock.h>
+#include <linux/vs_tag.h>
 
 #ifdef RPC_DEBUG
 # define RPCDBG_FACILITY	RPCDBG_AUTH
@@ -353,6 +354,7 @@ rpcauth_lookupcred(struct rpc_auth *auth, int flags)
 	struct auth_cred acred = {
 		.uid = current->fsuid,
 		.gid = current->fsgid,
+		.tag = dx_current_tag(),
 		.group_info = current->group_info,
 	};
 	struct rpc_cred *ret;
@@ -398,6 +400,7 @@ rpcauth_bind_root_cred(struct rpc_task *task)
 	struct auth_cred acred = {
 		.uid = 0,
 		.gid = 0,
+		.tag = dx_current_tag(),
 	};
 	struct rpc_cred *ret;
 

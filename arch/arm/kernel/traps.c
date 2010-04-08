@@ -214,8 +214,8 @@ static void __die(const char *str, int err, struct thread_info *thread, struct p
 	       str, err, ++die_counter);
 	print_modules();
 	__show_regs(regs);
-	printk("Process %s (pid: %d, stack limit = 0x%p)\n",
-		tsk->comm, task_pid_nr(tsk), thread + 1);
+	printk("Process %s (pid: %d:#%u, stack limit = 0x%p)\n",
+		tsk->comm, task_pid_nr(tsk), tsk->xid, thread + 1);
 
 	if (!user_mode(regs) || in_interrupt()) {
 		dump_mem("Stack: ", regs->ARM_sp,

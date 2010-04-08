@@ -19,6 +19,7 @@
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
 #include <linux/workqueue.h>
+#include <linux/vs_limit.h>
 
 struct fdtable_defer {
 	spinlock_t lock;
@@ -367,6 +368,8 @@ struct files_struct *dup_fd(struct files_struct *oldf, int *errorp)
 		struct file *f = *old_fds++;
 		if (f) {
 			get_file(f);
+			/* TODO: sum it first for check and performance */
+			vx_openfd_inc(open_files - i);
 		} else {
 			/*
 			 * The fd may be claimed in the fd bitmap but not yet
@@ -475,6 +478,7 @@ repeat:
 	else
 		FD_CLR(fd, fdt->close_on_exec);
 	error = fd;
+	vx_openfd_inc(fd);
 #if 1
 	/* Sanity check */
 	if (rcu_dereference(fdt->fd[fd]) != NULL) {

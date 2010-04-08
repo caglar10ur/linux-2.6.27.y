@@ -189,7 +189,11 @@ struct ext2_group_desc
 #define EXT2_NOTAIL_FL			FS_NOTAIL_FL	/* file tail should not be merged */
 #define EXT2_DIRSYNC_FL			FS_DIRSYNC_FL	/* dirsync behaviour (directories only) */
 #define EXT2_TOPDIR_FL			FS_TOPDIR_FL	/* Top of directory hierarchies*/
+#define EXT2_IXUNLINK_FL		FS_IXUNLINK_FL	/* Immutable invert on unlink */
 #define EXT2_RESERVED_FL		FS_RESERVED_FL	/* reserved for ext2 lib */
+
+#define EXT2_BARRIER_FL			FS_BARRIER_FL	/* Barrier for chroot() */
+#define EXT2_COW_FL			FS_COW_FL	/* Copy on Write marker */
 
 #define EXT2_FL_USER_VISIBLE		FS_FL_USER_VISIBLE	/* User visible flags */
 #define EXT2_FL_USER_MODIFIABLE		FS_FL_USER_MODIFIABLE	/* User modifiable flags */
@@ -247,7 +251,7 @@ struct ext2_inode {
 		struct {
 			__u8	l_i_frag;	/* Fragment number */
 			__u8	l_i_fsize;	/* Fragment size */
-			__u16	i_pad1;
+			__u16	l_i_tag;	/* Context Tag */
 			__le16	l_i_uid_high;	/* these 2 fields    */
 			__le16	l_i_gid_high;	/* were reserved2[0] */
 			__u32	l_i_reserved2;
@@ -279,6 +283,7 @@ struct ext2_inode {
 #define i_gid_low	i_gid
 #define i_uid_high	osd2.linux2.l_i_uid_high
 #define i_gid_high	osd2.linux2.l_i_gid_high
+#define i_raw_tag	osd2.linux2.l_i_tag
 #define i_reserved2	osd2.linux2.l_i_reserved2
 #endif
 
@@ -323,6 +328,7 @@ struct ext2_inode {
 #define EXT2_MOUNT_USRQUOTA		0x020000  /* user quota */
 #define EXT2_MOUNT_GRPQUOTA		0x040000  /* group quota */
 #define EXT2_MOUNT_RESERVATION		0x080000  /* Preallocation */
+#define EXT2_MOUNT_TAGGED		(1<<24)	  /* Enable Context Tags */
 
 
 #define clear_opt(o, opt)		o &= ~EXT2_MOUNT_##opt

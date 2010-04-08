@@ -21,6 +21,7 @@
 #include <linux/audit.h>
 #include <linux/pid_namespace.h>
 #include <linux/syscalls.h>
+#include <linux/vs_context.h>
 
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
@@ -139,6 +140,11 @@ int __ptrace_may_access(struct task_struct *task, unsigned int mode)
 		dumpable = get_dumpable(task->mm);
 	if (!dumpable && !capable(CAP_SYS_PTRACE))
 		return -EPERM;
+	if (!vx_check(task->xid, VS_ADMIN_P|VS_IDENT))
+		return -EPERM;
+	if (!vx_check(task->xid, VS_IDENT) &&
+		!task_vx_flags(task, VXF_STATE_ADMIN, 0))
+		return -EACCES;
 
 	return security_ptrace_may_access(task, mode);
 }
@@ -566,6 +572,10 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, long, addr, long, data)
 		ret = PTR_ERR(child);
 		goto out;
 	}
+
+	ret = -EPERM;
+	if (!vx_check(vx_task_xid(child), VS_WATCH_P | VS_IDENT))
+		goto out_put_task_struct;
 
 	if (request == PTRACE_ATTACH) {
 		ret = ptrace_attach(child);

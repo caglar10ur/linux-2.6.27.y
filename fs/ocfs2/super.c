@@ -154,6 +154,7 @@ enum {
 	Opt_localalloc,
 	Opt_localflocks,
 	Opt_stack,
+	Opt_tag, Opt_notag, Opt_tagid,
 	Opt_err,
 };
 
@@ -173,6 +174,9 @@ static match_table_t tokens = {
 	{Opt_localalloc, "localalloc=%d"},
 	{Opt_localflocks, "localflocks"},
 	{Opt_stack, "cluster_stack=%s"},
+	{Opt_tag, "tag"},
+	{Opt_notag, "notag"},
+	{Opt_tagid, "tagid=%u"},
 	{Opt_err, NULL}
 };
 
@@ -389,6 +393,13 @@ static int ocfs2_remount(struct super_block *sb, int *flags, char *data)
 
 	if (!ocfs2_parse_options(sb, data, &parsed_options, 1)) {
 		ret = -EINVAL;
+		goto out;
+	}
+
+	if ((parsed_options.mount_opt & OCFS2_MOUNT_TAGGED) &&
+		!(sb->s_flags & MS_TAGGED)) {
+		ret = -EINVAL;
+		mlog(ML_ERROR, "Cannot change tagging on remount\n");
 		goto out;
 	}
 
@@ -725,6 +736,9 @@ static int ocfs2_fill_super(struct super_block *sb, void *data, int silent)
 
 	ocfs2_complete_mount_recovery(osb);
 
+	if (osb->s_mount_opt & OCFS2_MOUNT_TAGGED)
+		sb->s_flags |= MS_TAGGED;
+
 	if (ocfs2_mount_local(osb))
 		snprintf(nodestr, sizeof(nodestr), "local");
 	else
@@ -918,6 +932,20 @@ static int ocfs2_parse_options(struct super_block *sb,
 			       OCFS2_STACK_LABEL_LEN);
 			mopt->cluster_stack[OCFS2_STACK_LABEL_LEN] = '\0';
 			break;
+#ifndef CONFIG_TAGGING_NONE
+		case Opt_tag:
+			mopt->mount_opt |= OCFS2_MOUNT_TAGGED;
+			break;
+		case Opt_notag:
+			mopt->mount_opt &= ~OCFS2_MOUNT_TAGGED;
+			break;
+#endif
+#ifdef CONFIG_PROPAGATE
+		case Opt_tagid:
+			/* use args[0] */
+			mopt->mount_opt |= OCFS2_MOUNT_TAGGED;
+			break;
+#endif
 		default:
 			mlog(ML_ERROR,
 			     "Unrecognized mount option \"%s\" "

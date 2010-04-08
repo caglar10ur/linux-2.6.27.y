@@ -909,6 +909,7 @@ enum {
 	Opt_ignore, Opt_barrier, Opt_err, Opt_resize, Opt_usrquota,
 	Opt_grpquota, Opt_extents, Opt_noextents, Opt_i_version,
 	Opt_mballoc, Opt_nomballoc, Opt_stripe, Opt_delalloc, Opt_nodelalloc,
+	Opt_tag, Opt_notag, Opt_tagid
 };
 
 static match_table_t tokens = {
@@ -969,6 +970,9 @@ static match_table_t tokens = {
 	{Opt_resize, "resize"},
 	{Opt_delalloc, "delalloc"},
 	{Opt_nodelalloc, "nodelalloc"},
+	{Opt_tag, "tag"},
+	{Opt_notag, "notag"},
+	{Opt_tagid, "tagid=%u"},
 	{Opt_err, NULL},
 };
 
@@ -1062,6 +1066,20 @@ static int parse_options(char *options, struct super_block *sb,
 		case Opt_nouid32:
 			set_opt(sbi->s_mount_opt, NO_UID32);
 			break;
+#ifndef CONFIG_TAGGING_NONE
+		case Opt_tag:
+			set_opt (sbi->s_mount_opt, TAGGED);
+			break;
+		case Opt_notag:
+			clear_opt (sbi->s_mount_opt, TAGGED);
+			break;
+#endif
+#ifdef CONFIG_PROPAGATE
+		case Opt_tagid:
+			/* use args[0] */
+			set_opt (sbi->s_mount_opt, TAGGED);
+			break;
+#endif
 		case Opt_nocheck:
 			clear_opt(sbi->s_mount_opt, CHECK);
 			break;
@@ -2030,6 +2048,9 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 	if (!parse_options((char *) data, sb, &journal_inum, &journal_devnum,
 			   NULL, 0))
 		goto failed_mount;
+
+	if (EXT4_SB(sb)->s_mount_opt & EXT4_MOUNT_TAGGED)
+		sb->s_flags |= MS_TAGGED;
 
 	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
 		((sbi->s_mount_opt & EXT4_MOUNT_POSIX_ACL) ? MS_POSIXACL : 0);
@@ -3038,6 +3059,13 @@ static int ext4_remount(struct super_block *sb, int *flags, char *data)
 
 	if (sbi->s_mount_opt & EXT4_MOUNT_ABORT)
 		ext4_abort(sb, __func__, "Abort forced by user");
+
+	if ((sbi->s_mount_opt & EXT4_MOUNT_TAGGED) &&
+		!(sb->s_flags & MS_TAGGED)) {
+		printk("EXT4-fs: %s: tagging not permitted on remount.\n",
+			sb->s_id);
+		return -EINVAL;
+	}
 
 	sb->s_flags = (sb->s_flags & ~MS_POSIXACL) |
 		((sbi->s_mount_opt & EXT4_MOUNT_POSIX_ACL) ? MS_POSIXACL : 0);

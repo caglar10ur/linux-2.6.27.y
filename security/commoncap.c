@@ -26,10 +26,11 @@
 #include <linux/sched.h>
 #include <linux/prctl.h>
 #include <linux/securebits.h>
+#include <linux/vs_context.h>
 
 int cap_netlink_send(struct sock *sk, struct sk_buff *skb)
 {
-	NETLINK_CB(skb).eff_cap = current->cap_effective;
+	NETLINK_CB(skb).eff_cap = vx_mbcaps(current->cap_effective);
 	return 0;
 }
 
@@ -50,9 +51,24 @@ EXPORT_SYMBOL(cap_netlink_recv);
  */
 int cap_capable (struct task_struct *tsk, int cap)
 {
-	/* Derived from include/linux/sched.h:capable. */
-	if (cap_raised(tsk->cap_effective, cap))
+	struct vx_info *vxi = tsk->vx_info;
+
+#if 0
+	printk("cap_capable() VXF_STATE_SETUP = %llx, raised = %x, eff = %08x:%08x\n",
+		vx_info_flags(vxi, VXF_STATE_SETUP, 0),
+		cap_raised(tsk->cap_effective, cap),
+		tsk->cap_effective.cap[1], tsk->cap_effective.cap[0]);
+#endif
+
+	/* special case SETUP */
+	if (vx_info_flags(vxi, VXF_STATE_SETUP, 0) &&
+		cap_raised(tsk->cap_effective, cap))
 		return 0;
+
+	/* Derived from include/linux/sched.h:capable. */
+	if (vx_cap_raised(vxi, tsk->cap_effective, cap))
+		return 0;
+
 	return -EPERM;
 }
 
@@ -696,7 +712,8 @@ void cap_task_reparent_to_init (struct task_struct *p)
 
 int cap_syslog (int type)
 {
-	if ((type != 3 && type != 10) && !capable(CAP_SYS_ADMIN))
+	if ((type != 3 && type != 10) &&
+		!vx_capable(CAP_SYS_ADMIN, VXC_SYSLOG))
 		return -EPERM;
 	return 0;
 }

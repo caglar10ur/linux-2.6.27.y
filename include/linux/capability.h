@@ -274,6 +274,7 @@ typedef struct kernel_cap_struct {
    arbitrary SCSI commands */
 /* Allow setting encryption key on loopback filesystem */
 /* Allow setting zone reclaim policy */
+/* Allow the selection of a security context */
 
 #define CAP_SYS_ADMIN        21
 
@@ -346,7 +347,13 @@ typedef struct kernel_cap_struct {
 
 #define CAP_MAC_ADMIN        33
 
-#define CAP_LAST_CAP         CAP_MAC_ADMIN
+/* Allow context manipulations */
+/* Allow changing context info on files */
+
+#define CAP_CONTEXT	     34
+
+
+#define CAP_LAST_CAP         CAP_CONTEXT
 
 #define cap_valid(x) ((x) >= 0 && (x) <= CAP_LAST_CAP)
 

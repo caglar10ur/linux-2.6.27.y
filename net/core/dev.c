@@ -127,6 +127,7 @@
 #include <linux/in.h>
 #include <linux/jhash.h>
 #include <linux/random.h>
+#include <linux/vs_inet.h>
 
 #include "net-sysfs.h"
 
@@ -925,10 +926,15 @@ int dev_change_name(struct net_device *dev, char *newname)
 		strlcpy(dev->name, newname, IFNAMSIZ);
 
 rollback:
-	err = device_rename(&dev->dev, dev->name);
-	if (err) {
-		memcpy(dev->name, oldname, IFNAMSIZ);
-		return err;
+	/* For now only devices in the initial network namespace
+	 * are in sysfs.
+	 */
+	if (net == &init_net) {
+		ret = device_rename(&dev->dev, dev->name);
+		if (ret) {
+			memcpy(dev->name, oldname, IFNAMSIZ);
+			return ret;
+		}
 	}
 
 	write_lock_bh(&dev_base_lock);
@@ -2518,6 +2524,8 @@ static int dev_ifconf(struct net *net, char __user *arg)
 
 	total = 0;
 	for_each_netdev(net, dev) {
+		if (!nx_dev_visible(current->nx_info, dev))
+			continue;
 		for (i = 0; i < NPROTO; i++) {
 			if (gifconf_list[i]) {
 				int done;
@@ -2585,6 +2593,9 @@ void dev_seq_stop(struct seq_file *seq, void *v)
 static void dev_seq_printf_stats(struct seq_file *seq, struct net_device *dev)
 {
 	struct net_device_stats *stats = dev->get_stats(dev);
+
+	if (!nx_dev_visible(current->nx_info, dev))
+		return;
 
 	seq_printf(seq, "%6s:%8lu %7lu %4lu %4lu %4lu %5lu %10lu %9lu "
 		   "%8lu %7lu %4lu %4lu %4lu %5lu %7lu %10lu\n",
@@ -4388,6 +4399,15 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	if (dev->features & NETIF_F_NETNS_LOCAL)
 		goto out;
 
+#ifdef CONFIG_SYSFS
+	/* Don't allow real devices to be moved when sysfs
+	 * is enabled.
+	 */
+	err = -EINVAL;
+	if (dev->dev.parent)
+		goto out;
+#endif
+
 	/* Ensure the device has been registrered */
 	err = -EINVAL;
 	if (dev->reg_state != NETREG_REGISTERED)
@@ -4445,6 +4465,8 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	 */
 	dev_addr_discard(dev);
 
+	netdev_unregister_kobject(dev);
+
 	/* Actually switch the network namespace */
 	dev_net_set(dev, net);
 
@@ -4461,7 +4483,6 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	}
 
 	/* Fixup kobjects */
-	netdev_unregister_kobject(dev);
 	err = netdev_register_kobject(dev);
 	WARN_ON(err);
 

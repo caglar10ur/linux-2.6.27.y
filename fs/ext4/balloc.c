@@ -17,6 +17,8 @@
 #include <linux/jbd2.h>
 #include <linux/quotaops.h>
 #include <linux/buffer_head.h>
+#include <linux/vs_dlimit.h>
+#include <linux/vs_tag.h>
 #include "ext4.h"
 #include "ext4_jbd2.h"
 #include "group.h"
@@ -1019,8 +1021,10 @@ void ext4_free_blocks(handle_t *handle, struct inode *inode,
 	else
 		ext4_mb_free_blocks(handle, inode, block, count,
 						metadata, &dquot_freed_blocks);
-	if (dquot_freed_blocks)
+	if (dquot_freed_blocks) {
+		DLIMIT_FREE_BLOCK(inode, dquot_freed_blocks);
 		DQUOT_FREE_BLOCK(inode, dquot_freed_blocks);
+	}
 	return;
 }
 
@@ -1925,6 +1929,8 @@ ext4_fsblk_t ext4_old_new_blocks(handle_t *handle, struct inode *inode,
 		*errp = -EDQUOT;
 		return 0;
 	}
+	if (DLIMIT_ALLOC_BLOCK(inode, num))
+	    goto out_dlimit;
 
 	sbi = EXT4_SB(sb);
 	es = EXT4_SB(sb)->s_es;
@@ -2139,12 +2145,16 @@ allocated:
 	*errp = 0;
 	brelse(bitmap_bh);
 	DQUOT_FREE_BLOCK(inode, *count-num);
+	DLIMIT_FREE_BLOCK(inode, *count-num);
 	*count = num;
 	return ret_block;
 
 io_error:
 	*errp = -EIO;
 out:
+	if (!performed_allocation)
+		DLIMIT_FREE_BLOCK(inode, *count);
+out_dlimit:
 	if (fatal) {
 		*errp = fatal;
 		ext4_std_error(sb, fatal);

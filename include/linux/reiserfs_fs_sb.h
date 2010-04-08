@@ -455,6 +455,7 @@ enum reiserfs_mount_options {
 	REISERFS_POSIXACL,
 	REISERFS_BARRIER_NONE,
 	REISERFS_BARRIER_FLUSH,
+	REISERFS_TAGGED,
 
 	/* Actions on error */
 	REISERFS_ERROR_PANIC,

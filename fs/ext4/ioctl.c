@@ -8,12 +8,14 @@
  */
 
 #include <linux/fs.h>
+#include <linux/mount.h>
 #include <linux/jbd2.h>
 #include <linux/capability.h>
 #include <linux/time.h>
 #include <linux/compat.h>
 #include <linux/smp_lock.h>
 #include <linux/mount.h>
+#include <linux/vs_tag.h>
 #include <asm/uaccess.h>
 #include "ext4_jbd2.h"
 #include "ext4.h"
@@ -51,6 +53,11 @@ long ext4_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		flags = ext4_mask_flags(inode->i_mode, flags);
 
+		if (IS_BARRIER(inode)) {
+			vxwprintk_task(1, "messing with the barrier.");
+			return -EACCES;
+		}
+
 		err = -EPERM;
 		mutex_lock(&inode->i_mutex);
 		/* Is it quota file? Do not allow user to mess with it */
@@ -68,7 +75,9 @@ long ext4_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		 *
 		 * This test looks nicer. Thanks to Pauline Middelink
 		 */
-		if ((flags ^ oldflags) & (EXT4_APPEND_FL | EXT4_IMMUTABLE_FL)) {
+		if ((oldflags & EXT4_IMMUTABLE_FL) ||
+			((flags ^ oldflags) & (EXT4_APPEND_FL |
+			EXT4_IMMUTABLE_FL | EXT4_IXUNLINK_FL))) {
 			if (!capable(CAP_LINUX_IMMUTABLE))
 				goto flags_out;
 		}

@@ -36,6 +36,7 @@
 #include <linux/mpage.h>
 #include <linux/uio.h>
 #include <linux/bio.h>
+#include <linux/vs_tag.h>
 #include "ext4_jbd2.h"
 #include "xattr.h"
 #include "acl.h"
@@ -3856,7 +3857,7 @@ static void ext4_free_branches(handle_t *handle, struct inode *inode,
 
 int ext4_can_truncate(struct inode *inode)
 {
-	if (IS_APPEND(inode) || IS_IMMUTABLE(inode))
+	if (IS_APPEND(inode) || IS_IXORUNLINK(inode))
 		return 0;
 	if (S_ISREG(inode->i_mode))
 		return 1;
@@ -4218,37 +4219,86 @@ void ext4_set_inode_flags(struct inode *inode)
 {
 	unsigned int flags = EXT4_I(inode)->i_flags;
 
-	inode->i_flags &= ~(S_SYNC|S_APPEND|S_IMMUTABLE|S_NOATIME|S_DIRSYNC);
+	inode->i_flags &= ~(S_IMMUTABLE | S_IXUNLINK |
+		S_SYNC | S_APPEND | S_NOATIME | S_DIRSYNC);
+
+	if (flags & EXT4_IMMUTABLE_FL)
+		inode->i_flags |= S_IMMUTABLE;
+	if (flags & EXT4_IXUNLINK_FL)
+		inode->i_flags |= S_IXUNLINK;
+
 	if (flags & EXT4_SYNC_FL)
 		inode->i_flags |= S_SYNC;
 	if (flags & EXT4_APPEND_FL)
 		inode->i_flags |= S_APPEND;
-	if (flags & EXT4_IMMUTABLE_FL)
-		inode->i_flags |= S_IMMUTABLE;
 	if (flags & EXT4_NOATIME_FL)
 		inode->i_flags |= S_NOATIME;
 	if (flags & EXT4_DIRSYNC_FL)
 		inode->i_flags |= S_DIRSYNC;
+
+	inode->i_vflags &= ~(V_BARRIER | V_COW);
+
+	if (flags & EXT4_BARRIER_FL)
+		inode->i_vflags |= V_BARRIER;
+	if (flags & EXT4_COW_FL)
+		inode->i_vflags |= V_COW;
 }
 
 /* Propagate flags from i_flags to EXT4_I(inode)->i_flags */
 void ext4_get_inode_flags(struct ext4_inode_info *ei)
 {
 	unsigned int flags = ei->vfs_inode.i_flags;
+	unsigned int vflags = ei->vfs_inode.i_vflags;
 
-	ei->i_flags &= ~(EXT4_SYNC_FL|EXT4_APPEND_FL|
-			EXT4_IMMUTABLE_FL|EXT4_NOATIME_FL|EXT4_DIRSYNC_FL);
+	ei->i_flags &= ~(EXT4_SYNC_FL | EXT4_APPEND_FL |
+			EXT4_IMMUTABLE_FL | EXT4_IXUNLINK_FL |
+			EXT4_NOATIME_FL | EXT4_DIRSYNC_FL |
+			EXT4_BARRIER_FL | EXT4_COW_FL);
+
+	if (flags & S_IMMUTABLE)
+		ei->i_flags |= EXT4_IMMUTABLE_FL;
+	if (flags & S_IXUNLINK)
+		ei->i_flags |= EXT4_IXUNLINK_FL;
+
 	if (flags & S_SYNC)
 		ei->i_flags |= EXT4_SYNC_FL;
 	if (flags & S_APPEND)
 		ei->i_flags |= EXT4_APPEND_FL;
-	if (flags & S_IMMUTABLE)
-		ei->i_flags |= EXT4_IMMUTABLE_FL;
 	if (flags & S_NOATIME)
 		ei->i_flags |= EXT4_NOATIME_FL;
 	if (flags & S_DIRSYNC)
 		ei->i_flags |= EXT4_DIRSYNC_FL;
+
+	if (vflags & V_BARRIER)
+		ei->i_flags |= EXT4_BARRIER_FL;
+	if (vflags & V_COW)
+		ei->i_flags |= EXT4_COW_FL;
 }
+
+int ext4_sync_flags(struct inode *inode)
+{
+	struct ext4_iloc iloc;
+	handle_t *handle;
+	int err;
+
+	handle = ext4_journal_start(inode, 1);
+	if (IS_ERR(handle))
+		return PTR_ERR(handle);
+	if (IS_SYNC(inode))
+		handle->h_sync = 1;
+	err = ext4_reserve_inode_write(handle, inode, &iloc);
+	if (err)
+		goto flags_err;
+
+	ext4_get_inode_flags(EXT4_I(inode));
+	inode->i_ctime = CURRENT_TIME;
+
+	err = ext4_mark_iloc_dirty(handle, inode, &iloc);
+flags_err:
+	ext4_journal_stop(handle);
+	return err;
+}
+
 static blkcnt_t ext4_inode_blocks(struct ext4_inode *raw_inode,
 					struct ext4_inode_info *ei)
 {
@@ -4281,6 +4331,8 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 	struct inode *inode;
 	long ret;
 	int block;
+	uid_t uid;
+	gid_t gid;
 
 	inode = iget_locked(sb, ino);
 	if (!inode)
@@ -4301,12 +4353,17 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 	bh = iloc.bh;
 	raw_inode = ext4_raw_inode(&iloc);
 	inode->i_mode = le16_to_cpu(raw_inode->i_mode);
-	inode->i_uid = (uid_t)le16_to_cpu(raw_inode->i_uid_low);
-	inode->i_gid = (gid_t)le16_to_cpu(raw_inode->i_gid_low);
+	uid = (uid_t)le16_to_cpu(raw_inode->i_uid_low);
+	gid = (gid_t)le16_to_cpu(raw_inode->i_gid_low);
 	if(!(test_opt (inode->i_sb, NO_UID32))) {
-		inode->i_uid |= le16_to_cpu(raw_inode->i_uid_high) << 16;
-		inode->i_gid |= le16_to_cpu(raw_inode->i_gid_high) << 16;
+		uid |= le16_to_cpu(raw_inode->i_uid_high) << 16;
+		gid |= le16_to_cpu(raw_inode->i_gid_high) << 16;
 	}
+	inode->i_uid = INOTAG_UID(DX_TAG(inode), uid, gid);
+	inode->i_gid = INOTAG_GID(DX_TAG(inode), uid, gid);
+	inode->i_tag = INOTAG_TAG(DX_TAG(inode), uid, gid,
+		le16_to_cpu(raw_inode->i_raw_tag));
+
 	inode->i_nlink = le16_to_cpu(raw_inode->i_links_count);
 
 	ei->i_state = 0;
@@ -4498,6 +4555,8 @@ static int ext4_do_update_inode(handle_t *handle,
 	struct ext4_inode *raw_inode = ext4_raw_inode(iloc);
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	struct buffer_head *bh = iloc->bh;
+	uid_t uid = TAGINO_UID(DX_TAG(inode), inode->i_uid, inode->i_tag);
+	gid_t gid = TAGINO_GID(DX_TAG(inode), inode->i_gid, inode->i_tag);
 	int err = 0, rc, block;
 
 	/* For fields not not tracking in the in-memory inode,
@@ -4508,29 +4567,32 @@ static int ext4_do_update_inode(handle_t *handle,
 	ext4_get_inode_flags(ei);
 	raw_inode->i_mode = cpu_to_le16(inode->i_mode);
 	if(!(test_opt(inode->i_sb, NO_UID32))) {
-		raw_inode->i_uid_low = cpu_to_le16(low_16_bits(inode->i_uid));
-		raw_inode->i_gid_low = cpu_to_le16(low_16_bits(inode->i_gid));
+		raw_inode->i_uid_low = cpu_to_le16(low_16_bits(uid));
+		raw_inode->i_gid_low = cpu_to_le16(low_16_bits(gid));
 /*
  * Fix up interoperability with old kernels. Otherwise, old inodes get
  * re-used with the upper 16 bits of the uid/gid intact
  */
 		if(!ei->i_dtime) {
 			raw_inode->i_uid_high =
-				cpu_to_le16(high_16_bits(inode->i_uid));
+				cpu_to_le16(high_16_bits(uid));
 			raw_inode->i_gid_high =
-				cpu_to_le16(high_16_bits(inode->i_gid));
+				cpu_to_le16(high_16_bits(gid));
 		} else {
 			raw_inode->i_uid_high = 0;
 			raw_inode->i_gid_high = 0;
 		}
 	} else {
 		raw_inode->i_uid_low =
-			cpu_to_le16(fs_high2lowuid(inode->i_uid));
+			cpu_to_le16(fs_high2lowuid(uid));
 		raw_inode->i_gid_low =
-			cpu_to_le16(fs_high2lowgid(inode->i_gid));
+			cpu_to_le16(fs_high2lowgid(gid));
 		raw_inode->i_uid_high = 0;
 		raw_inode->i_gid_high = 0;
 	}
+#ifdef CONFIG_TAGGING_INTERN
+	raw_inode->i_raw_tag = cpu_to_le16(inode->i_tag);
+#endif
 	raw_inode->i_links_count = cpu_to_le16(inode->i_nlink);
 
 	EXT4_INODE_SET_XTIME(i_ctime, inode, raw_inode);
@@ -4694,7 +4756,8 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 		return error;
 
 	if ((ia_valid & ATTR_UID && attr->ia_uid != inode->i_uid) ||
-		(ia_valid & ATTR_GID && attr->ia_gid != inode->i_gid)) {
+		(ia_valid & ATTR_GID && attr->ia_gid != inode->i_gid) ||
+		(ia_valid & ATTR_TAG && attr->ia_tag != inode->i_tag)) {
 		handle_t *handle;
 
 		/* (user+group)*(old+new) structure, inode write (sb,
@@ -4716,6 +4779,8 @@ int ext4_setattr(struct dentry *dentry, struct iattr *attr)
 			inode->i_uid = attr->ia_uid;
 		if (attr->ia_valid & ATTR_GID)
 			inode->i_gid = attr->ia_gid;
+		if ((attr->ia_valid & ATTR_TAG) && IS_TAGGED(inode))
+			inode->i_tag = attr->ia_tag;
 		error = ext4_mark_inode_dirty(handle, inode);
 		ext4_journal_stop(handle);
 	}

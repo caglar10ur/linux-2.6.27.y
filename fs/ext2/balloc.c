@@ -16,6 +16,8 @@
 #include <linux/sched.h>
 #include <linux/buffer_head.h>
 #include <linux/capability.h>
+#include <linux/vs_dlimit.h>
+#include <linux/vs_tag.h>
 
 /*
  * balloc.c contains the blocks allocation and deallocation routines
@@ -569,6 +571,7 @@ do_more:
 	}
 error_return:
 	brelse(bitmap_bh);
+	DLIMIT_FREE_BLOCK(inode, freed);
 	release_blocks(sb, freed);
 	DQUOT_FREE_BLOCK(inode, freed);
 }
@@ -701,7 +704,6 @@ ext2_try_to_allocate(struct super_block *sb, int group,
 			start = 0;
 		end = EXT2_BLOCKS_PER_GROUP(sb);
 	}
-
 	BUG_ON(start > EXT2_BLOCKS_PER_GROUP(sb));
 
 repeat:
@@ -1251,6 +1253,11 @@ ext2_fsblk_t ext2_new_blocks(struct inode *inode, ext2_fsblk_t goal,
 		*errp = -EDQUOT;
 		return 0;
 	}
+	if (DLIMIT_ALLOC_BLOCK(inode, num)) {
+		*errp = -ENOSPC;
+		DQUOT_FREE_BLOCK(inode, num);
+		return 0;
+	}
 
 	sbi = EXT2_SB(sb);
 	es = EXT2_SB(sb)->s_es;
@@ -1409,6 +1416,7 @@ allocated:
 
 	*errp = 0;
 	brelse(bitmap_bh);
+	DLIMIT_FREE_BLOCK(inode, *count-num);
 	DQUOT_FREE_BLOCK(inode, *count-num);
 	*count = num;
 	return ret_block;
@@ -1419,8 +1427,10 @@ out:
 	/*
 	 * Undo the block allocation
 	 */
-	if (!performed_allocation)
+	if (!performed_allocation) {
+		DLIMIT_FREE_BLOCK(inode, *count);
 		DQUOT_FREE_BLOCK(inode, *count);
+	}
 	brelse(bitmap_bh);
 	return 0;
 }

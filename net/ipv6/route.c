@@ -2211,7 +2211,8 @@ static int rt6_fill_node(struct net *net,
 		struct inet6_dev *idev = ip6_dst_idev(&rt->u.dst);
 		struct in6_addr saddr_buf;
 		if (ipv6_dev_get_saddr(net, idev ? idev->dev : NULL,
-				       dst, 0, &saddr_buf) == 0)
+			dst, 0, &saddr_buf,
+			(skb->sk ? skb->sk->sk_nx_info : NULL)) == 0)
 			NLA_PUT(skb, RTA_PREFSRC, 16, &saddr_buf);
 	}
 

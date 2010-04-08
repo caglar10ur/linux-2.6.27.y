@@ -15,6 +15,7 @@
 #include <linux/nfsd/nfsd.h>
 #include <linux/nfsd/xdr.h>
 #include <linux/mm.h>
+#include <linux/vs_tag.h>
 #include "auth.h"
 
 #define NFSDDBG_FACILITY		NFSDDBG_XDR
@@ -98,6 +99,8 @@ static __be32 *
 decode_sattr(__be32 *p, struct iattr *iap)
 {
 	u32	tmp, tmp1;
+	uid_t	uid = 0;
+	gid_t	gid = 0;
 
 	iap->ia_valid = 0;
 
@@ -111,12 +114,15 @@ decode_sattr(__be32 *p, struct iattr *iap)
 	}
 	if ((tmp = ntohl(*p++)) != (u32)-1) {
 		iap->ia_valid |= ATTR_UID;
-		iap->ia_uid = tmp;
+		uid = tmp;
 	}
 	if ((tmp = ntohl(*p++)) != (u32)-1) {
 		iap->ia_valid |= ATTR_GID;
-		iap->ia_gid = tmp;
+		gid = tmp;
 	}
+	iap->ia_uid = INOTAG_UID(DX_TAG_NFSD, uid, gid);
+	iap->ia_gid = INOTAG_GID(DX_TAG_NFSD, uid, gid);
+	iap->ia_tag = INOTAG_TAG(DX_TAG_NFSD, uid, gid, 0);
 	if ((tmp = ntohl(*p++)) != (u32)-1) {
 		iap->ia_valid |= ATTR_SIZE;
 		iap->ia_size = tmp;
@@ -161,8 +167,10 @@ encode_fattr(struct svc_rqst *rqstp, __be32 *p, struct svc_fh *fhp,
 	*p++ = htonl(nfs_ftypes[type >> 12]);
 	*p++ = htonl((u32) stat->mode);
 	*p++ = htonl((u32) stat->nlink);
-	*p++ = htonl((u32) nfsd_ruid(rqstp, stat->uid));
-	*p++ = htonl((u32) nfsd_rgid(rqstp, stat->gid));
+	*p++ = htonl((u32) nfsd_ruid(rqstp,
+		TAGINO_UID(DX_TAG(dentry->d_inode), stat->uid, stat->tag)));
+	*p++ = htonl((u32) nfsd_rgid(rqstp,
+		TAGINO_GID(DX_TAG(dentry->d_inode), stat->gid, stat->tag)));
 
 	if (S_ISLNK(type) && stat->size > NFS_MAXPATHLEN) {
 		*p++ = htonl(NFS_MAXPATHLEN);

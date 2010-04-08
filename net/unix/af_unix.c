@@ -114,6 +114,8 @@
 #include <linux/mount.h>
 #include <net/checksum.h>
 #include <linux/security.h>
+#include <linux/vs_context.h>
+#include <linux/vs_limit.h>
 
 static struct hlist_head unix_socket_table[UNIX_HASH_SIZE + 1];
 static DEFINE_SPINLOCK(unix_table_lock);
@@ -258,6 +260,8 @@ static struct sock *__unix_find_socket_byname(struct net *net,
 		if (!net_eq(sock_net(s), net))
 			continue;
 
+		if (!nx_check(s->sk_nid, VS_WATCH_P | VS_IDENT))
+			continue;
 		if (u->addr->len == len &&
 		    !memcmp(u->addr->name, sunname, len))
 			goto found;
@@ -2108,6 +2112,8 @@ static struct sock *unix_seq_idx(struct seq_file *seq, loff_t pos)
 	for (s = first_unix_socket(&iter->i); s; s = next_unix_socket(&iter->i, s)) {
 		if (sock_net(s) != seq_file_net(seq))
 			continue;
+		if (!nx_check(s->sk_nid, VS_WATCH_P | VS_IDENT))
+			continue;
 		if (off == pos)
 			return s;
 		++off;
@@ -2133,7 +2139,8 @@ static void *unix_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 		sk = first_unix_socket(&iter->i);
 	else
 		sk = next_unix_socket(&iter->i, sk);
-	while (sk && (sock_net(sk) != seq_file_net(seq)))
+	while (sk && (sock_net(sk) != seq_file_net(seq) ||
+		!nx_check(sk->sk_nid, VS_WATCH_P | VS_IDENT)))
 		sk = next_unix_socket(&iter->i, sk);
 	return sk;
 }

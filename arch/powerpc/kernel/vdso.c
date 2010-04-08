@@ -22,6 +22,7 @@
 #include <linux/security.h>
 #include <linux/bootmem.h>
 #include <linux/lmb.h>
+#include <linux/vs_memory.h>
 
 #include <asm/pgtable.h>
 #include <asm/system.h>

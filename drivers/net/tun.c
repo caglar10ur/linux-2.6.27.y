@@ -61,6 +61,7 @@
 #include <linux/crc32.h>
 #include <linux/nsproxy.h>
 #include <linux/virtio_net.h>
+#include <linux/vs_network.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 
@@ -93,6 +94,7 @@ struct tun_struct {
 	int			attached;
 	uid_t			owner;
 	gid_t			group;
+	nid_t			nid;
 
 	wait_queue_head_t	read_wait;
 	struct sk_buff_head	readq;
@@ -681,6 +683,7 @@ static void tun_setup(struct net_device *dev)
 
 	tun->owner = -1;
 	tun->group = -1;
+	tun->nid = current->nid;
 
 	dev->open = tun_net_open;
 	dev->hard_start_xmit = tun_net_xmit;
@@ -713,6 +716,9 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 	tn = net_generic(net, tun_net_id);
 	tun = tun_get_by_name(tn, ifr->ifr_name);
 	if (tun) {
+		if (!nx_check(tun->nid, VS_IDENT | VS_HOSTID | VS_ADMIN_P))
+			return -EPERM;
+
 		if (tun->attached)
 			return -EBUSY;
 
@@ -721,7 +727,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		      current->euid != tun->owner) ||
 		     (tun->group != -1 &&
 		      current->egid != tun->group)) &&
-		     !capable(CAP_NET_ADMIN))
+		     !cap_raised(current->cap_effective, CAP_NET_ADMIN))
 			return -EPERM;
 	}
 	else if (__dev_get_by_name(net, ifr->ifr_name))
@@ -732,7 +738,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 
 		err = -EINVAL;
 
-		if (!capable(CAP_NET_ADMIN))
+		if (!nx_capable(CAP_NET_ADMIN, NXC_TUN_CREATE))
 			return -EPERM;
 
 		/* Set dev type */
@@ -970,6 +976,16 @@ static int tun_chr_ioctl(struct inode *inode, struct file *file,
 		tun->group= (gid_t) arg;
 
 		DBG(KERN_INFO "%s: group set to %d\n", tun->dev->name, tun->group);
+		break;
+
+	case TUNSETNID:
+		if (!capable(CAP_CONTEXT))
+			return -EPERM;
+
+		/* Set nid owner of the device */
+		tun->nid = (nid_t) arg;
+
+		DBG(KERN_INFO "%s: nid owner set to %u\n", tun->dev->name, tun->nid);
 		break;
 
 	case TUNSETLINK:

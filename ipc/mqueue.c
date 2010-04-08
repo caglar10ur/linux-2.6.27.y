@@ -31,6 +31,8 @@
 #include <linux/mutex.h>
 #include <linux/nsproxy.h>
 #include <linux/pid.h>
+#include <linux/vs_context.h>
+#include <linux/vs_limit.h>
 
 #include <net/sock.h>
 #include "util.h"
@@ -71,6 +73,7 @@ struct mqueue_inode_info {
 	struct sigevent notify;
 	struct pid* notify_owner;
 	struct user_struct *user;	/* user who created, for accounting */
+	struct vx_info *vxi;
 	struct sock *notify_sock;
 	struct sk_buff *notify_cookie;
 
@@ -119,6 +122,7 @@ static struct inode *mqueue_get_inode(struct super_block *sb, int mode,
 			struct mqueue_inode_info *info;
 			struct task_struct *p = current;
 			struct user_struct *u = p->user;
+			struct vx_info *vxi = p->vx_info;
 			unsigned long mq_bytes, mq_msg_tblsz;
 
 			inode->i_fop = &mqueue_file_operations;
@@ -133,6 +137,7 @@ static struct inode *mqueue_get_inode(struct super_block *sb, int mode,
 			info->notify_owner = NULL;
 			info->qsize = 0;
 			info->user = NULL;	/* set when all is ok */
+			info->vxi = NULL;
 			memset(&info->attr, 0, sizeof(info->attr));
 			info->attr.mq_maxmsg = DFLT_MSGMAX;
 			info->attr.mq_msgsize = DFLT_MSGSIZEMAX;
@@ -147,22 +152,26 @@ static struct inode *mqueue_get_inode(struct super_block *sb, int mode,
 			spin_lock(&mq_lock);
 			if (u->mq_bytes + mq_bytes < u->mq_bytes ||
 		 	    u->mq_bytes + mq_bytes >
-			    p->signal->rlim[RLIMIT_MSGQUEUE].rlim_cur) {
+			    p->signal->rlim[RLIMIT_MSGQUEUE].rlim_cur ||
+			    !vx_ipcmsg_avail(vxi, mq_bytes)) {
 				spin_unlock(&mq_lock);
 				goto out_inode;
 			}
 			u->mq_bytes += mq_bytes;
+			vx_ipcmsg_add(vxi, u, mq_bytes);
 			spin_unlock(&mq_lock);
 
 			info->messages = kmalloc(mq_msg_tblsz, GFP_KERNEL);
 			if (!info->messages) {
 				spin_lock(&mq_lock);
 				u->mq_bytes -= mq_bytes;
+				vx_ipcmsg_sub(vxi, u, mq_bytes);
 				spin_unlock(&mq_lock);
 				goto out_inode;
 			}
 			/* all is ok */
 			info->user = get_uid(u);
+			info->vxi = get_vx_info(vxi);
 		} else if (S_ISDIR(mode)) {
 			inc_nlink(inode);
 			/* Some things misbehave if size == 0 on a directory */
@@ -253,10 +262,14 @@ static void mqueue_delete_inode(struct inode *inode)
 		   (info->attr.mq_maxmsg * info->attr.mq_msgsize));
 	user = info->user;
 	if (user) {
+		struct vx_info *vxi = info->vxi;
+
 		spin_lock(&mq_lock);
 		user->mq_bytes -= mq_bytes;
+		vx_ipcmsg_sub(vxi, user, mq_bytes);
 		queues_count--;
 		spin_unlock(&mq_lock);
+		put_vx_info(vxi);
 		free_uid(user);
 	}
 }

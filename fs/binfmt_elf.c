@@ -38,6 +38,7 @@
 #include <linux/random.h>
 #include <linux/elf.h>
 #include <linux/utsname.h>
+#include <linux/vs_memory.h>
 #include <asm/uaccess.h>
 #include <asm/param.h>
 #include <asm/page.h>

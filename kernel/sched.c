@@ -71,6 +71,8 @@
 #include <linux/debugfs.h>
 #include <linux/ctype.h>
 #include <linux/ftrace.h>
+#include <linux/vs_sched.h>
+#include <linux/vs_cvirt.h>
 
 #include <asm/tlb.h>
 #include <asm/irq_regs.h>
@@ -496,6 +498,16 @@ struct root_domain {
  */
 static struct root_domain def_root_domain;
 
+#endif
+	unsigned long norm_time;
+	unsigned long idle_time;
+#ifdef CONFIG_VSERVER_IDLETIME
+	int idle_skip;
+#endif
+#ifdef CONFIG_VSERVER_HARDCPU
+	struct list_head hold_queue;
+	unsigned long nr_onhold;
+	int idle_tokens;
 #endif
 
 /*
@@ -1639,6 +1651,7 @@ static void update_avg(u64 *avg, u64 sample)
 
 static void enqueue_task(struct rq *rq, struct task_struct *p, int wakeup)
 {
+	// BUG_ON(p->state & TASK_ONHOLD);
 	sched_info_queued(p);
 	p->sched_class->enqueue_task(rq, p, wakeup);
 	p->se.on_rq = 1;
@@ -1836,6 +1849,9 @@ struct migration_req {
 	struct completion done;
 };
 
+#include "sched_mon.h"
+
+
 /*
  * The task's runqueue lock must be held.
  * Returns true if you have to wait for migration thread.
@@ -1845,6 +1861,7 @@ migrate_task(struct task_struct *p, int dest_cpu, struct migration_req *req)
 {
 	struct rq *rq = task_rq(p);
 
+	vxm_migrate_task(p, rq, dest_cpu);
 	/*
 	 * If the task is not on a runqueue (and not running), then
 	 * it is sufficient to simply update the task's cpu field.
@@ -2241,6 +2258,12 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state, int sync)
 		/* might preempt at this point */
 		rq = task_rq_lock(p, &flags);
 		old_state = p->state;
+
+	/* we need to unhold suspended tasks
+	if (old_state & TASK_ONHOLD) {
+		vx_unhold_task(p, rq);
+		old_state = p->state;
+	} */
 		if (!(old_state & state))
 			goto out;
 		if (p->se.on_rq)
@@ -4066,13 +4089,16 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 void account_user_time(struct task_struct *p, cputime_t cputime)
 {
 	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+	struct vx_info *vxi = p->vx_info;  /* p is _always_ current */
 	cputime64_t tmp;
+	int nice = (TASK_NICE(p) > 0);
 
 	p->utime = cputime_add(p->utime, cputime);
+	vx_account_user(vxi, cputime, nice);
 
 	/* Add user time to cpustat. */
 	tmp = cputime_to_cputime64(cputime);
-	if (TASK_NICE(p) > 0)
+	if (nice)
 		cpustat->nice = cputime64_add(cpustat->nice, tmp);
 	else
 		cpustat->user = cputime64_add(cpustat->user, tmp);
@@ -4119,6 +4145,7 @@ void account_system_time(struct task_struct *p, int hardirq_offset,
 			 cputime_t cputime)
 {
 	struct cpu_usage_stat *cpustat = &kstat_this_cpu.cpustat;
+	struct vx_info *vxi = p->vx_info;  /* p is _always_ current */
 	struct rq *rq = this_rq();
 	cputime64_t tmp;
 
@@ -4128,6 +4155,7 @@ void account_system_time(struct task_struct *p, int hardirq_offset,
 	}
 
 	p->stime = cputime_add(p->stime, cputime);
+	vx_account_system(vxi, cputime, (p == rq->idle));
 
 	/* Add system time to cpustat. */
 	tmp = cputime_to_cputime64(cputime);
@@ -4962,7 +4990,7 @@ SYSCALL_DEFINE1(nice, int, increment)
 		nice = 19;
 
 	if (increment < 0 && !can_nice(current, nice))
-		return -EPERM;
+		return vx_flags(VXF_IGNEG_NICE, 0) ? 0 : -EPERM;
 
 	retval = security_task_setnice(current, nice);
 	if (retval)

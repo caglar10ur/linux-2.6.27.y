@@ -133,6 +133,9 @@ extern int dir_notify_enable;
 #define MS_RELATIME	(1<<21)	/* Update atime relative to mtime/ctime. */
 #define MS_KERNMOUNT	(1<<22) /* this is a kern_mount call */
 #define MS_I_VERSION	(1<<23) /* Update inode I_version field */
+#define MS_TAGGED	(1<<24) /* use generic inode tagging */
+#define MS_TAGID	(1<<25) /* use specific tag for this mount */
+#define MS_NOTAGCHECK	(1<<26) /* don't check tags */
 #define MS_ACTIVE	(1<<30)
 #define MS_NOUSER	(1<<31)
 
@@ -159,6 +162,14 @@ extern int dir_notify_enable;
 #define S_NOCMTIME	128	/* Do not update file c/mtime */
 #define S_SWAPFILE	256	/* Do not truncate: swapon got its bmaps */
 #define S_PRIVATE	512	/* Inode is fs-internal */
+#define S_IXUNLINK	1024	/* Immutable Invert on unlink */
+
+/* Linux-VServer related Inode flags */
+
+#define V_VALID		1
+#define V_XATTR		2
+#define V_BARRIER	4	/* Barrier for chroot() */
+#define V_COW		8	/* Copy on Write */
 
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
@@ -181,18 +192,31 @@ extern int dir_notify_enable;
 #define IS_DIRSYNC(inode)	(__IS_FLG(inode, MS_SYNCHRONOUS|MS_DIRSYNC) || \
 					((inode)->i_flags & (S_SYNC|S_DIRSYNC)))
 #define IS_MANDLOCK(inode)	__IS_FLG(inode, MS_MANDLOCK)
-#define IS_NOATIME(inode)   __IS_FLG(inode, MS_RDONLY|MS_NOATIME)
-#define IS_I_VERSION(inode)   __IS_FLG(inode, MS_I_VERSION)
+#define IS_NOATIME(inode)	__IS_FLG(inode, MS_RDONLY|MS_NOATIME)
+#define IS_I_VERSION(inode)	__IS_FLG(inode, MS_I_VERSION)
+#define IS_TAGGED(inode)	__IS_FLG(inode, MS_TAGGED)
 
 #define IS_NOQUOTA(inode)	((inode)->i_flags & S_NOQUOTA)
 #define IS_APPEND(inode)	((inode)->i_flags & S_APPEND)
 #define IS_IMMUTABLE(inode)	((inode)->i_flags & S_IMMUTABLE)
+#define IS_IXUNLINK(inode)	((inode)->i_flags & S_IXUNLINK)
+#define IS_IXORUNLINK(inode)	((IS_IXUNLINK(inode) ? S_IMMUTABLE : 0) ^ IS_IMMUTABLE(inode))
 #define IS_POSIXACL(inode)	__IS_FLG(inode, MS_POSIXACL)
 
 #define IS_DEADDIR(inode)	((inode)->i_flags & S_DEAD)
 #define IS_NOCMTIME(inode)	((inode)->i_flags & S_NOCMTIME)
 #define IS_SWAPFILE(inode)	((inode)->i_flags & S_SWAPFILE)
 #define IS_PRIVATE(inode)	((inode)->i_flags & S_PRIVATE)
+
+#define IS_BARRIER(inode)	(S_ISDIR((inode)->i_mode) && ((inode)->i_vflags & V_BARRIER))
+
+#ifdef CONFIG_VSERVER_COWBL
+#  define IS_COW(inode)		(IS_IXUNLINK(inode) && IS_IMMUTABLE(inode))
+#  define IS_COW_LINK(inode)	(S_ISREG((inode)->i_mode) && ((inode)->i_nlink > 1))
+#else
+#  define IS_COW(inode)		(0)
+#  define IS_COW_LINK(inode)	(0)
+#endif
 
 /* the read-only stuff doesn't really belong here, but any other place is
    probably as bad and I don't want to create yet another include file. */
@@ -267,11 +291,14 @@ extern int dir_notify_enable;
 #define FS_TOPDIR_FL			0x00020000 /* Top of directory hierarchies*/
 #define FS_EXTENT_FL			0x00080000 /* Extents */
 #define FS_DIRECTIO_FL			0x00100000 /* Use direct i/o */
+#define FS_IXUNLINK_FL			0x08000000 /* Immutable invert on unlink */
 #define FS_RESERVED_FL			0x80000000 /* reserved for ext2 lib */
 
-#define FS_FL_USER_VISIBLE		0x0003DFFF /* User visible flags */
-#define FS_FL_USER_MODIFIABLE		0x000380FF /* User modifiable flags */
+#define FS_BARRIER_FL			0x04000000 /* Barrier for chroot() */
+#define FS_COW_FL			0x20000000 /* Copy on Write marker */
 
+#define FS_FL_USER_VISIBLE		0x0103DFFF /* User visible flags */
+#define FS_FL_USER_MODIFIABLE		0x010380FF /* User modifiable flags */
 
 #define SYNC_FILE_RANGE_WAIT_BEFORE	1
 #define SYNC_FILE_RANGE_WRITE		2
@@ -342,6 +369,7 @@ typedef void (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 #define ATTR_KILL_PRIV	(1 << 14)
 #define ATTR_OPEN	(1 << 15) /* Truncating from open(O_TRUNC) */
 #define ATTR_TIMES_SET	(1 << 16)
+#define ATTR_TAG	(1 << 17)
 
 /*
  * This is the Inode Attributes structure, used for notify_change().  It
@@ -357,6 +385,7 @@ struct iattr {
 	umode_t		ia_mode;
 	uid_t		ia_uid;
 	gid_t		ia_gid;
+	tag_t		ia_tag;
 	loff_t		ia_size;
 	struct timespec	ia_atime;
 	struct timespec	ia_mtime;
@@ -369,6 +398,9 @@ struct iattr {
 	 */
 	struct file	*ia_file;
 };
+
+#define ATTR_FLAG_BARRIER	512	/* Barrier for chroot() */
+#define ATTR_FLAG_IXUNLINK	1024	/* Immutable invert on unlink */
 
 /*
  * Includes for diskquotas.
@@ -634,7 +666,9 @@ struct inode {
 	unsigned int		i_nlink;
 	uid_t			i_uid;
 	gid_t			i_gid;
+	tag_t			i_tag;
 	dev_t			i_rdev;
+	dev_t			i_mdev;
 	u64			i_version;
 	loff_t			i_size;
 #ifdef __NEED_I_SIZE_ORDERED
@@ -682,7 +716,8 @@ struct inode {
 	unsigned long		i_state;
 	unsigned long		dirtied_when;	/* jiffies of first dirtying */
 
-	unsigned int		i_flags;
+	unsigned short		i_flags;
+	unsigned short		i_vflags;
 
 	atomic_t		i_writecount;
 #ifdef CONFIG_SECURITY
@@ -769,12 +804,12 @@ static inline void i_size_write(struct inode *inode, loff_t i_size)
 
 static inline unsigned iminor(const struct inode *inode)
 {
-	return MINOR(inode->i_rdev);
+	return MINOR(inode->i_mdev);
 }
 
 static inline unsigned imajor(const struct inode *inode)
 {
-	return MAJOR(inode->i_rdev);
+	return MAJOR(inode->i_mdev);
 }
 
 extern struct block_device *I_BDEV(struct inode *inode);
@@ -832,6 +867,7 @@ struct file {
 	loff_t			f_pos;
 	struct fown_struct	f_owner;
 	unsigned int		f_uid, f_gid;
+	xid_t			f_xid;
 	struct file_ra_state	f_ra;
 
 	u64			f_version;
@@ -966,6 +1002,7 @@ struct file_lock {
 	struct file *fl_file;
 	loff_t fl_start;
 	loff_t fl_end;
+	xid_t fl_xid;
 
 	struct fasync_struct *	fl_fasync; /* for lease break notifications */
 	unsigned long fl_break_time;	/* for nonblocking lease breaks */
@@ -1296,6 +1333,7 @@ struct inode_operations {
 	void (*truncate_range)(struct inode *, loff_t, loff_t);
 	long (*fallocate)(struct inode *inode, int mode, loff_t offset,
 			  loff_t len);
+	int (*sync_flags) (struct inode *);
 };
 
 struct seq_file;
@@ -1311,6 +1349,7 @@ extern ssize_t vfs_readv(struct file *, const struct iovec __user *,
 		unsigned long, loff_t *);
 extern ssize_t vfs_writev(struct file *, const struct iovec __user *,
 		unsigned long, loff_t *);
+ssize_t vfs_sendfile(struct file *, struct file *, loff_t *, size_t, loff_t);
 
 struct super_operations {
    	struct inode *(*alloc_inode)(struct super_block *sb);
@@ -2001,6 +2040,7 @@ extern int dcache_dir_open(struct inode *, struct file *);
 extern int dcache_dir_close(struct inode *, struct file *);
 extern loff_t dcache_dir_lseek(struct file *, loff_t, int);
 extern int dcache_readdir(struct file *, void *, filldir_t);
+extern int dcache_readdir_filter(struct file *, void *, filldir_t, int (*)(struct dentry *));
 extern int simple_getattr(struct vfsmount *, struct dentry *, struct kstat *);
 extern int simple_statfs(struct dentry *, struct kstatfs *);
 extern int simple_link(struct dentry *, struct inode *, struct dentry *);

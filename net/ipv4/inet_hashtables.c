@@ -21,6 +21,7 @@
 
 #include <net/inet_connection_sock.h>
 #include <net/inet_hashtables.h>
+#include <net/route.h>
 #include <net/ip.h>
 
 /*
@@ -163,11 +164,10 @@ static struct sock *inet_lookup_listener_slow(struct net *net,
 			const __be32 rcv_saddr = inet->rcv_saddr;
 			int score = sk->sk_family == PF_INET ? 1 : 0;
 
-			if (rcv_saddr) {
-				if (rcv_saddr != daddr)
-					continue;
+			if (v4_inet_addr_match(sk->sk_nx_info, daddr, rcv_saddr))
 				score += 2;
-			}
+			else
+				continue;
 			if (sk->sk_bound_dev_if) {
 				if (sk->sk_bound_dev_if != dif)
 					continue;
@@ -199,7 +199,7 @@ struct sock *__inet_lookup_listener(struct net *net,
 		const struct inet_sock *inet = inet_sk((sk = __sk_head(head)));
 
 		if (inet->num == hnum && !sk->sk_node.next &&
-		    (!inet->rcv_saddr || inet->rcv_saddr == daddr) &&
+		    v4_inet_addr_match(sk->sk_nx_info, daddr, inet->rcv_saddr) &&
 		    (sk->sk_family == PF_INET || !ipv6_only_sock(sk)) &&
 		    !sk->sk_bound_dev_if && net_eq(sock_net(sk), net))
 			goto sherry_cache;

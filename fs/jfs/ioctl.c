@@ -11,6 +11,7 @@
 #include <linux/mount.h>
 #include <linux/time.h>
 #include <linux/sched.h>
+#include <linux/mount.h>
 #include <asm/current.h>
 #include <asm/uaccess.h>
 
@@ -85,6 +86,11 @@ long jfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (!S_ISDIR(inode->i_mode))
 			flags &= ~JFS_DIRSYNC_FL;
 
+		if (IS_BARRIER(inode)) {
+			vxwprintk_task(1, "messing with the barrier.");
+			return -EACCES;
+		}
+
 		/* Is it quota file? Do not allow user to mess with it */
 		if (IS_NOQUOTA(inode)) {
 			err = -EPERM;
@@ -102,8 +108,8 @@ long jfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		 * the relevant capability.
 		 */
 		if ((oldflags & JFS_IMMUTABLE_FL) ||
-			((flags ^ oldflags) &
-			(JFS_APPEND_FL | JFS_IMMUTABLE_FL))) {
+			((flags ^ oldflags) & (JFS_APPEND_FL |
+			JFS_IMMUTABLE_FL | JFS_IXUNLINK_FL))) {
 			if (!capable(CAP_LINUX_IMMUTABLE)) {
 				mutex_unlock(&inode->i_mutex);
 				err = -EPERM;

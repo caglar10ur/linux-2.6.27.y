@@ -215,7 +215,8 @@ unsigned long segv(struct faultinfo fi, unsigned long ip, int is_user,
 		current->thread.arch.faultinfo = fi;
 		force_sig_info(SIGBUS, &si, current);
 	} else if (err == -ENOMEM) {
-		printk(KERN_INFO "VM: killing process %s\n", current->comm);
+		printk(KERN_INFO "VM: killing process %s(%d:#%u)\n",
+			current->comm, task_pid_nr(current), current->xid);
 		do_exit(SIGKILL);
 	} else {
 		BUG_ON(err != -EFAULT);

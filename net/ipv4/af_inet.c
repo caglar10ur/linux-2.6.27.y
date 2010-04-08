@@ -114,6 +114,7 @@
 #ifdef CONFIG_IP_MROUTE
 #include <linux/mroute.h>
 #endif
+#include <linux/vs_limit.h>
 
 extern void ip_mc_drop_socket(struct sock *sk);
 
@@ -325,9 +326,12 @@ lookup_protocol:
 	}
 
 	err = -EPERM;
+	if ((protocol == IPPROTO_ICMP) &&
+		nx_capable(answer->capability, NXC_RAW_ICMP))
+		goto override;
 	if (answer->capability > 0 && !capable(answer->capability))
 		goto out_rcu_unlock;
-
+override:
 	err = -EAFNOSUPPORT;
 	if (!inet_netns_ok(net, protocol))
 		goto out_rcu_unlock;
@@ -445,6 +449,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
 	struct sock *sk = sock->sk;
 	struct inet_sock *inet = inet_sk(sk);
+	struct nx_v4_sock_addr nsa;
 	unsigned short snum;
 	int chk_addr_ret;
 	int err;
@@ -458,7 +463,11 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (addr_len < sizeof(struct sockaddr_in))
 		goto out;
 
-	chk_addr_ret = inet_addr_type(sock_net(sk), addr->sin_addr.s_addr);
+	err = v4_map_sock_addr(inet, addr, &nsa);
+	if (err)
+		goto out;
+
+	chk_addr_ret = inet_addr_type(sock_net(sk), nsa.saddr);
 
 	/* Not specified by any standard per-se, however it breaks too
 	 * many applications when removed.  It is unfortunate since
@@ -470,7 +479,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	err = -EADDRNOTAVAIL;
 	if (!sysctl_ip_nonlocal_bind &&
 	    !inet->freebind &&
-	    addr->sin_addr.s_addr != htonl(INADDR_ANY) &&
+	    nsa.saddr != htonl(INADDR_ANY) &&
 	    chk_addr_ret != RTN_LOCAL &&
 	    chk_addr_ret != RTN_MULTICAST &&
 	    chk_addr_ret != RTN_BROADCAST)
@@ -495,7 +504,7 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (sk->sk_state != TCP_CLOSE || inet->num)
 		goto out_release_sock;
 
-	inet->rcv_saddr = inet->saddr = addr->sin_addr.s_addr;
+	v4_set_sock_addr(inet, &nsa);
 	if (chk_addr_ret == RTN_MULTICAST || chk_addr_ret == RTN_BROADCAST)
 		inet->saddr = 0;  /* Use device */
 
@@ -688,11 +697,13 @@ int inet_getname(struct socket *sock, struct sockaddr *uaddr,
 		     peer == 1))
 			return -ENOTCONN;
 		sin->sin_port = inet->dport;
-		sin->sin_addr.s_addr = inet->daddr;
+		sin->sin_addr.s_addr =
+			nx_map_sock_lback(sk->sk_nx_info, inet->daddr);
 	} else {
 		__be32 addr = inet->rcv_saddr;
 		if (!addr)
 			addr = inet->saddr;
+		addr = nx_map_sock_lback(sk->sk_nx_info, addr);
 		sin->sin_port = inet->sport;
 		sin->sin_addr.s_addr = addr;
 	}

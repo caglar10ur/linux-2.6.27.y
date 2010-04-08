@@ -26,6 +26,7 @@
 #include <linux/tracehook.h>
 #include <linux/compat.h>
 #include <linux/elf.h>
+#include <linux/vs_base.h>
 
 #include <asm/asi.h>
 #include <asm/pgtable.h>

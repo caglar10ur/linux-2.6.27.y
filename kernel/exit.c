@@ -47,6 +47,11 @@
 #include <linux/blkdev.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/tracehook.h>
+#include <linux/vs_limit.h>
+#include <linux/vs_context.h>
+#include <linux/vs_network.h>
+#include <linux/vs_pid.h>
+#include <linux/vserver/global.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -485,9 +490,11 @@ static void close_files(struct files_struct * files)
 					filp_close(file, files);
 					cond_resched();
 				}
+				vx_openfd_dec(i);
 			}
 			i++;
 			set >>= 1;
+			cond_resched();
 		}
 	}
 }
@@ -554,6 +561,7 @@ void put_fs_struct(struct fs_struct *fs)
 	if (atomic_dec_and_test(&fs->count)) {
 		path_put(&fs->root);
 		path_put(&fs->pwd);
+		atomic_dec(&vs_global_fs);
 		kmem_cache_free(fs_cachep, fs);
 	}
 }
@@ -1129,6 +1137,10 @@ NORET_TYPE void do_exit(long code)
 
 	if (tsk->splice_pipe)
 		__free_pipe_info(tsk->splice_pipe);
+
+	/* needs to stay after exit_notify() */
+	exit_vx_info(tsk, code);
+	exit_nx_info(tsk);
 
 	preempt_disable();
 	/* causes final put_task_struct in finish_task_switch(). */

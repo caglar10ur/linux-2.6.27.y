@@ -13,6 +13,7 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/vs_pid.h>
 
 #define KTHREAD_NICE_LEVEL (-5)
 
@@ -98,7 +99,7 @@ static void create_kthread(struct kthread_create_info *create)
 		struct sched_param param = { .sched_priority = 0 };
 		wait_for_completion(&create->started);
 		read_lock(&tasklist_lock);
-		create->result = find_task_by_pid_ns(pid, &init_pid_ns);
+		create->result = find_task_by_real_pid(pid);
 		read_unlock(&tasklist_lock);
 		/*
 		 * root may have changed our (kthreadd's) priority or CPU mask.

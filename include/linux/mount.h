@@ -37,6 +37,9 @@ struct mnt_namespace;
 #define MNT_UNBINDABLE	0x2000	/* if the vfsmount is a unbindable mount */
 #define MNT_PNODE_MASK	0x3000	/* propagation flag mask */
 
+#define MNT_TAGID	0x10000
+#define MNT_NOTAG	0x20000
+
 struct vfsmount {
 	struct list_head mnt_hash;
 	struct vfsmount *mnt_parent;	/* fs we are mounted on */
@@ -71,6 +74,7 @@ struct vfsmount {
 	 * are held, and all mnt_writer[]s on this mount have 0 as their ->count
 	 */
 	atomic_t __mnt_writers;
+	tag_t mnt_tag;			/* tagging used for vfsmount */
 };
 
 static inline struct vfsmount *mntget(struct vfsmount *mnt)

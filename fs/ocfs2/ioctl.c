@@ -42,7 +42,7 @@ static int ocfs2_get_inode_attr(struct inode *inode, unsigned *flags)
 	return status;
 }
 
-static int ocfs2_set_inode_attr(struct inode *inode, unsigned flags,
+int ocfs2_set_inode_attr(struct inode *inode, unsigned flags,
 				unsigned mask)
 {
 	struct ocfs2_inode_info *ocfs2_inode = OCFS2_I(inode);
@@ -66,6 +66,11 @@ static int ocfs2_set_inode_attr(struct inode *inode, unsigned flags,
 
 	if (!S_ISDIR(inode->i_mode))
 		flags &= ~OCFS2_DIRSYNC_FL;
+
+	if (IS_BARRIER(inode)) {
+		vxwprintk_task(1, "messing with the barrier.");
+		goto bail_unlock;
+	}
 
 	handle = ocfs2_start_trans(osb, OCFS2_INODE_UPDATE_CREDITS);
 	if (IS_ERR(handle)) {

@@ -95,7 +95,8 @@ void die_if_kernel(char *str, struct pt_regs *regs)
 "              /_| \\__/ |_\\\n"
 "                 \\__U_/\n");
 
-	printk("%s(%d): %s [#%d]\n", current->comm, task_pid_nr(current), str, ++die_counter);
+	printk("%s(%d[#%u]): %s [#%d]\n", current->comm,
+		task_pid_nr(current), current->xid, str, ++die_counter);
 	show_regs(regs);
 	add_taint(TAINT_DIE);
 

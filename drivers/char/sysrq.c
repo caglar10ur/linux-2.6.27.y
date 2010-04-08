@@ -37,6 +37,7 @@
 #include <linux/irq.h>
 #include <linux/hrtimer.h>
 #include <linux/oom.h>
+#include <linux/vserver/debug.h>
 
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
@@ -351,6 +352,21 @@ static struct sysrq_key_op sysrq_unrt_op = {
 	.enable_mask	= SYSRQ_ENABLE_RTNICE,
 };
 
+
+#ifdef CONFIG_VSERVER_DEBUG
+static void sysrq_handle_vxinfo(int key, struct tty_struct *tty)
+{
+	dump_vx_info_inactive((key == 'x')?0:1);
+}
+
+static struct sysrq_key_op sysrq_showvxinfo_op = {
+	.handler	= sysrq_handle_vxinfo,
+	.help_msg	= "conteXt",
+	.action_msg	= "Show Context Info",
+	.enable_mask	= SYSRQ_ENABLE_DUMP,
+};
+#endif
+
 /* Key Operations table and lock */
 static DEFINE_SPINLOCK(sysrq_key_table_lock);
 
@@ -404,7 +420,11 @@ static struct sysrq_key_op *sysrq_key_table[36] = {
 	NULL,				/* x */
 	/* y: May be registered on sparc64 for global register dump */
 	NULL,				/* y */
-	NULL				/* z */
+#ifdef CONFIG_VSERVER_DEBUG
+	&sysrq_showvxinfo_op,		/* z */
+#else
+	NULL,				/* z */
+#endif
 };
 
 /* key2index calculation, -1 on invalid index */
@@ -416,6 +436,8 @@ static int sysrq_key_table_key2index(int key)
 		retval = key - '0';
 	else if ((key >= 'a') && (key <= 'z'))
 		retval = key + 10 - 'a';
+	else if ((key >= 'A') && (key <= 'Z'))
+		retval = key + 10 - 'A';
 	else
 		retval = -1;
 	return retval;

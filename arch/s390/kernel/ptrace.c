@@ -35,6 +35,7 @@
 #include <linux/signal.h>
 #include <linux/elf.h>
 #include <linux/regset.h>
+#include <linux/vs_base.h>
 
 #include <asm/segment.h>
 #include <asm/page.h>

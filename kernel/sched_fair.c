@@ -724,6 +724,9 @@ enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int wakeup)
 	check_spread(cfs_rq, se);
 	if (se != cfs_rq->curr)
 		__enqueue_entity(cfs_rq, se);
+
+	if (entity_is_task(se))
+		vx_activate_task(task_of(se));
 }
 
 static void
@@ -750,6 +753,8 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int sleep)
 
 	if (se != cfs_rq->curr)
 		__dequeue_entity(cfs_rq, se);
+	if (entity_is_task(se))
+		vx_deactivate_task(task_of(se));
 	account_entity_dequeue(cfs_rq, se);
 }
 

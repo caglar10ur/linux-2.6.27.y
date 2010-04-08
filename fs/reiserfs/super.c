@@ -898,6 +898,14 @@ static int reiserfs_parse_options(struct super_block *s, char *options,	/* strin
 		{"user_xattr",.setmask = 1 << REISERFS_UNSUPPORTED_OPT},
 		{"nouser_xattr",.clrmask = 1 << REISERFS_UNSUPPORTED_OPT},
 #endif
+#ifndef CONFIG_TAGGING_NONE
+		{"tagxid",.setmask = 1 << REISERFS_TAGGED},
+		{"tag",.setmask = 1 << REISERFS_TAGGED},
+		{"notag",.clrmask = 1 << REISERFS_TAGGED},
+#endif
+#ifdef CONFIG_PROPAGATE
+		{"tag",.arg_required = 'T',.values = NULL},
+#endif
 #ifdef CONFIG_REISERFS_FS_POSIX_ACL
 		{"acl",.setmask = 1 << REISERFS_POSIXACL},
 		{"noacl",.clrmask = 1 << REISERFS_POSIXACL},
@@ -1192,6 +1200,12 @@ static int reiserfs_remount(struct super_block *s, int *mount_flags, char *arg)
 #ifdef CONFIG_QUOTA
 	handle_quota_files(s, qf_names, &qfmt);
 #endif
+
+	if ((mount_options & (1 << REISERFS_TAGGED)) &&
+		!(s->s_flags & MS_TAGGED)) {
+		reiserfs_warning(s, "reiserfs: tagging not permitted on remount.");
+		return -EINVAL;
+	}
 
 	handle_attrs(s);
 
@@ -1656,6 +1670,10 @@ static int reiserfs_fill_super(struct super_block *s, void *data, int silent)
 		      reiserfs_bdevname(s));
 		goto error;
 	}
+
+	/* map mount option tagxid */
+	if (REISERFS_SB(s)->s_mount_opt & (1 << REISERFS_TAGGED))
+		s->s_flags |= MS_TAGGED;
 
 	rs = SB_DISK_SUPER_BLOCK(s);
 	/* Let's do basic sanity check to verify that underlying device is not

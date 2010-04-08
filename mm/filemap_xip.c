@@ -17,6 +17,7 @@
 #include <linux/sched.h>
 #include <linux/seqlock.h>
 #include <linux/mutex.h>
+#include <linux/vs_memory.h>
 #include <asm/tlbflush.h>
 #include <asm/io.h>
 

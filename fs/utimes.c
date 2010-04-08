@@ -8,6 +8,8 @@
 #include <linux/stat.h>
 #include <linux/utime.h>
 #include <linux/syscalls.h>
+#include <linux/mount.h>
+#include <linux/vs_cowbl.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 

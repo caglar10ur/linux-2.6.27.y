@@ -71,7 +71,6 @@ struct sched_param {
 #include <linux/fs_struct.h>
 #include <linux/compiler.h>
 #include <linux/completion.h>
-#include <linux/pid.h>
 #include <linux/percpu.h>
 #include <linux/topology.h>
 #include <linux/proportions.h>
@@ -88,6 +87,7 @@ struct sched_param {
 #include <linux/kobject.h>
 #include <linux/latencytop.h>
 #include <linux/cred.h>
+#include <linux/pid.h>
 
 #include <asm/processor.h>
 
@@ -358,24 +358,26 @@ extern void arch_unmap_area_topdown(struct mm_struct *, unsigned long);
  * The mm counters are not protected by its page_table_lock,
  * so must be incremented atomically.
  */
-#define set_mm_counter(mm, member, value) atomic_long_set(&(mm)->_##member, value)
-#define get_mm_counter(mm, member) ((unsigned long)atomic_long_read(&(mm)->_##member))
-#define add_mm_counter(mm, member, value) atomic_long_add(value, &(mm)->_##member)
-#define inc_mm_counter(mm, member) atomic_long_inc(&(mm)->_##member)
-#define dec_mm_counter(mm, member) atomic_long_dec(&(mm)->_##member)
-
+#define __set_mm_counter(mm, member, value) \
+	atomic_long_set(&(mm)->_##member, value)
+#define get_mm_counter(mm, member) \
+	((unsigned long)atomic_long_read(&(mm)->_##member))
 #else  /* NR_CPUS < CONFIG_SPLIT_PTLOCK_CPUS */
 /*
  * The mm counters are protected by its page_table_lock,
  * so can be incremented directly.
  */
-#define set_mm_counter(mm, member, value) (mm)->_##member = (value)
+#define __set_mm_counter(mm, member, value) (mm)->_##member = (value)
 #define get_mm_counter(mm, member) ((mm)->_##member)
-#define add_mm_counter(mm, member, value) (mm)->_##member += (value)
-#define inc_mm_counter(mm, member) (mm)->_##member++
-#define dec_mm_counter(mm, member) (mm)->_##member--
 
 #endif /* NR_CPUS < CONFIG_SPLIT_PTLOCK_CPUS */
+
+#define set_mm_counter(mm, member, value) \
+	vx_ ## member ## pages_sub((mm), (get_mm_counter(mm, member) - value))
+#define add_mm_counter(mm, member, value) \
+	vx_ ## member ## pages_add((mm), (value))
+#define inc_mm_counter(mm, member) vx_ ## member ## pages_inc((mm))
+#define dec_mm_counter(mm, member) vx_ ## member ## pages_dec((mm))
 
 #define get_mm_rss(mm)					\
 	(get_mm_counter(mm, file_rss) + get_mm_counter(mm, anon_rss))
@@ -1200,6 +1202,14 @@ struct task_struct {
 #endif
 	seccomp_t seccomp;
 
+/* vserver context data */
+	struct vx_info *vx_info;
+	struct nx_info *nx_info;
+
+	xid_t xid;
+	nid_t nid;
+	tag_t tag;
+
 /* Thread group tracking */
    	u32 parent_exec_id;
    	u32 self_exec_id;
@@ -1386,6 +1396,11 @@ struct pid_namespace;
  * see also pid_nr() etc in include/linux/pid.h
  */
 
+#include <linux/vserver/base.h>
+#include <linux/vserver/context.h>
+#include <linux/vserver/debug.h>
+#include <linux/vserver/pid.h>
+
 static inline pid_t task_pid_nr(struct task_struct *tsk)
 {
 	return tsk->pid;
@@ -1395,7 +1410,7 @@ pid_t task_pid_nr_ns(struct task_struct *tsk, struct pid_namespace *ns);
 
 static inline pid_t task_pid_vnr(struct task_struct *tsk)
 {
-	return pid_vnr(task_pid(tsk));
+	return vx_map_pid(pid_vnr(task_pid(tsk)));
 }
 
 
@@ -1408,7 +1423,7 @@ pid_t task_tgid_nr_ns(struct task_struct *tsk, struct pid_namespace *ns);
 
 static inline pid_t task_tgid_vnr(struct task_struct *tsk)
 {
-	return pid_vnr(task_tgid(tsk));
+	return vx_map_tgid(pid_vnr(task_tgid(tsk)));
 }
 
 

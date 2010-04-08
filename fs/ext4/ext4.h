@@ -243,7 +243,11 @@ struct flex_groups {
 #define EXT4_HUGE_FILE_FL               0x00040000 /* Set to each huge file */
 #define EXT4_EXTENTS_FL			0x00080000 /* Inode uses extents */
 #define EXT4_EXT_MIGRATE		0x00100000 /* Inode is migrating */
+#define EXT4_IXUNLINK_FL		0x08000000 /* Immutable invert on unlink */
 #define EXT4_RESERVED_FL		0x80000000 /* reserved for ext4 lib */
+
+#define EXT4_BARRIER_FL			0x04000000 /* Barrier for chroot() */
+#define EXT4_COW_FL			0x20000000 /* Copy on Write marker */
 
 #define EXT4_FL_USER_VISIBLE		0x000BDFFF /* User visible flags */
 #define EXT4_FL_USER_MODIFIABLE		0x000380FF /* User modifiable flags */
@@ -569,6 +573,7 @@ do {									       \
 #define EXT4_MOUNT_I_VERSION            0x2000000 /* i_version support */
 #define EXT4_MOUNT_MBALLOC		0x4000000 /* Buddy allocation support */
 #define EXT4_MOUNT_DELALLOC		0x8000000 /* Delalloc support */
+#define EXT4_MOUNT_TAGGED		(1<<24) /* Enable Context Tags */
 /* Compatibility, for having both ext2_fs.h and ext4_fs.h included at once */
 #ifndef _LINUX_EXT2_FS_H
 #define clear_opt(o, opt)		o &= ~EXT4_MOUNT_##opt
@@ -1091,6 +1096,7 @@ int ext4_get_blocks_handle(handle_t *handle, struct inode *inode,
 				ext4_lblk_t iblock, unsigned long maxblocks,
 				struct buffer_head *bh_result,
 				int create, int extend_disksize);
+extern int ext4_sync_flags(struct inode *inode);
 
 extern struct inode *ext4_iget(struct super_block *, unsigned long);
 extern int  ext4_write_inode (struct inode *, int);

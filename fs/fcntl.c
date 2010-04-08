@@ -20,6 +20,7 @@
 #include <linux/rcupdate.h>
 #include <linux/pid_namespace.h>
 #include <linux/smp_lock.h>
+#include <linux/vs_limit.h>
 
 #include <asm/poll.h>
 #include <asm/siginfo.h>
@@ -103,6 +104,8 @@ SYSCALL_DEFINE3(dup3, unsigned int, oldfd, unsigned int, newfd, int, flags)
 
 	if (tofree)
 		filp_close(tofree, files);
+	else
+		vx_openfd_inc(newfd);	/* fd was unused */
 
 	return newfd;
 
@@ -343,6 +346,8 @@ SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 
 	filp = fget(fd);
 	if (!filp)
+		goto out;
+	if (!vx_files_avail(1))
 		goto out;
 
 	err = security_file_fcntl(filp, cmd, arg);

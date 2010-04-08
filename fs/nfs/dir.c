@@ -34,6 +34,7 @@
 #include <linux/namei.h>
 #include <linux/mount.h>
 #include <linux/sched.h>
+#include <linux/vs_tag.h>
 
 #include "nfs4_fs.h"
 #include "delegation.h"
@@ -940,6 +941,7 @@ static struct dentry *nfs_lookup(struct inode *dir, struct dentry * dentry, stru
 	if (IS_ERR(res))
 		goto out_unblock_sillyrename;
 
+	dx_propagate_tag(nd, inode);
 no_entry:
 	res = d_materialise_unique(dentry, inode);
 	if (res != NULL) {

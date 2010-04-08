@@ -45,6 +45,7 @@
 #include <linux/buffer_head.h>
 #include <linux/pagemap.h>
 #include <linux/quotaops.h>
+#include <linux/vs_tag.h>
 
 #include "jfs_incore.h"
 #include "jfs_inode.h"
@@ -3058,6 +3059,8 @@ static int copy_from_dinode(struct dinode * dip, struct inode *ip)
 {
 	struct jfs_inode_info *jfs_ip = JFS_IP(ip);
 	struct jfs_sb_info *sbi = JFS_SBI(ip->i_sb);
+	uid_t uid;
+	gid_t gid;
 
 	jfs_ip->fileset = le32_to_cpu(dip->di_fileset);
 	jfs_ip->mode2 = le32_to_cpu(dip->di_mode);
@@ -3078,14 +3081,18 @@ static int copy_from_dinode(struct dinode * dip, struct inode *ip)
 	}
 	ip->i_nlink = le32_to_cpu(dip->di_nlink);
 
-	jfs_ip->saved_uid = le32_to_cpu(dip->di_uid);
+	uid = le32_to_cpu(dip->di_uid);
+	gid = le32_to_cpu(dip->di_gid);
+	ip->i_tag = INOTAG_TAG(DX_TAG(ip), uid, gid, 0);
+
+	jfs_ip->saved_uid = INOTAG_UID(DX_TAG(ip), uid, gid);
 	if (sbi->uid == -1)
 		ip->i_uid = jfs_ip->saved_uid;
 	else {
 		ip->i_uid = sbi->uid;
 	}
 
-	jfs_ip->saved_gid = le32_to_cpu(dip->di_gid);
+	jfs_ip->saved_gid = INOTAG_GID(DX_TAG(ip), uid, gid);
 	if (sbi->gid == -1)
 		ip->i_gid = jfs_ip->saved_gid;
 	else {
@@ -3150,14 +3157,12 @@ static void copy_to_dinode(struct dinode * dip, struct inode *ip)
 	dip->di_size = cpu_to_le64(ip->i_size);
 	dip->di_nblocks = cpu_to_le64(PBLK2LBLK(ip->i_sb, ip->i_blocks));
 	dip->di_nlink = cpu_to_le32(ip->i_nlink);
-	if (sbi->uid == -1)
-		dip->di_uid = cpu_to_le32(ip->i_uid);
-	else
-		dip->di_uid = cpu_to_le32(jfs_ip->saved_uid);
-	if (sbi->gid == -1)
-		dip->di_gid = cpu_to_le32(ip->i_gid);
-	else
-		dip->di_gid = cpu_to_le32(jfs_ip->saved_gid);
+
+	dip->di_uid = cpu_to_le32(TAGINO_UID(DX_TAG(ip),
+		(sbi->uid == -1) ? ip->i_uid : jfs_ip->saved_uid, ip->i_tag));
+	dip->di_gid = cpu_to_le32(TAGINO_GID(DX_TAG(ip),
+		(sbi->gid == -1) ? ip->i_gid : jfs_ip->saved_gid, ip->i_tag));
+
 	jfs_get_inode_flags(jfs_ip);
 	/*
 	 * mode2 is only needed for storing the higher order bits.

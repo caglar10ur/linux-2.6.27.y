@@ -82,6 +82,8 @@
 #include <linux/pid_namespace.h>
 #include <linux/ptrace.h>
 #include <linux/tracehook.h>
+#include <linux/vs_context.h>
+#include <linux/vs_network.h>
 
 #include <asm/pgtable.h>
 #include <asm/processor.h>
@@ -143,8 +145,9 @@ static const char *task_state_array[] = {
 	"D (disk sleep)",	/*  2 */
 	"T (stopped)",		/*  4 */
 	"T (tracing stop)",	/*  8 */
-	"Z (zombie)",		/* 16 */
-	"X (dead)"		/* 32 */
+	"H (on hold)",		/* 16 */
+	"Z (zombie)",		/* 32 */
+	"X (dead)",		/* 64 */
 };
 
 static inline const char *get_task_state(struct task_struct *tsk)
@@ -165,6 +168,7 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 	struct group_info *group_info;
 	int g;
 	struct fdtable *fdt = NULL;
+/* +	pid_t pid, ptgid, tppid, tgid; */
 	pid_t ppid, tpid;
 
 	rcu_read_lock();
@@ -176,6 +180,12 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 		if (tracer)
 			tpid = task_pid_nr_ns(tracer, ns);
 	}
+/* 	tgid = vx_map_tgid(p->tgid);
+	pid = vx_map_pid(p->pid);
+	ptgid = vx_map_pid(pid_alive(p) ?
+		rcu_dereference(p->real_parent)->tgid : 0);
+	tppid = vx_map_pid(pid_alive(p) && p->ptrace ?
+		rcu_dereference(p->parent)->pid : 0); */
 	seq_printf(m,
 		"State:\t%s\n"
 		"Tgid:\t%d\n"
@@ -287,7 +297,7 @@ static inline void task_sig(struct seq_file *m, struct task_struct *p)
 }
 
 static void render_cap_t(struct seq_file *m, const char *header,
-			kernel_cap_t *a)
+			struct vx_info *vxi, kernel_cap_t *a)
 {
 	unsigned __capi;
 
@@ -301,10 +311,10 @@ static void render_cap_t(struct seq_file *m, const char *header,
 
 static inline void task_cap(struct seq_file *m, struct task_struct *p)
 {
-	render_cap_t(m, "CapInh:\t", &p->cap_inheritable);
-	render_cap_t(m, "CapPrm:\t", &p->cap_permitted);
-	render_cap_t(m, "CapEff:\t", &p->cap_effective);
-	render_cap_t(m, "CapBnd:\t", &p->cap_bset);
+	render_cap_t(m, "CapInh:\t", p->vx_info, &p->cap_inheritable);
+	render_cap_t(m, "CapPrm:\t", p->vx_info, &p->cap_permitted);
+	render_cap_t(m, "CapEff:\t", p->vx_info, &p->cap_effective);
+	render_cap_t(m, "CapBnd:\t", p->vx_info, &p->cap_bset);
 }
 
 static inline void task_context_switch_counts(struct seq_file *m,
@@ -315,6 +325,45 @@ static inline void task_context_switch_counts(struct seq_file *m,
 			p->nvcsw,
 			p->nivcsw);
 }
+
+int proc_pid_nsproxy(struct seq_file *m, struct pid_namespace *ns,
+			struct pid *pid, struct task_struct *task)
+{
+	seq_printf(m,	"Proxy:\t%p(%c)\n"
+			"Count:\t%u\n"
+			"uts:\t%p(%c)\n"
+			"ipc:\t%p(%c)\n"
+			"mnt:\t%p(%c)\n"
+			"pid:\t%p(%c)\n"
+			"user:\t%p(%c)\n"
+			"net:\t%p(%c)\n",
+			task->nsproxy,
+			(task->nsproxy == init_task.nsproxy ? 'I' : '-'),
+			atomic_read(&task->nsproxy->count),
+			task->nsproxy->uts_ns,
+			(task->nsproxy->uts_ns == init_task.nsproxy->uts_ns ? 'I' : '-'),
+			task->nsproxy->ipc_ns,
+			(task->nsproxy->ipc_ns == init_task.nsproxy->ipc_ns ? 'I' : '-'),
+			task->nsproxy->mnt_ns,
+			(task->nsproxy->mnt_ns == init_task.nsproxy->mnt_ns ? 'I' : '-'),
+			task->nsproxy->pid_ns,
+			(task->nsproxy->pid_ns == init_task.nsproxy->pid_ns ? 'I' : '-'),
+			task->nsproxy->user_ns,
+			(task->nsproxy->user_ns == init_task.nsproxy->user_ns ? 'I' : '-'),
+			task->nsproxy->net_ns,
+			(task->nsproxy->net_ns == init_task.nsproxy->net_ns ? 'I' : '-'));
+	return 0;
+}
+
+void task_vs_id(struct seq_file *m, struct task_struct *task)
+{
+	if (task_vx_flags(task, VXF_HIDE_VINFO, 0))
+		return;
+
+	seq_printf(m, "VxID: %d\n", vx_task_xid(task));
+	seq_printf(m, "NxID: %d\n", nx_task_nid(task));
+}
+
 
 int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
@@ -331,6 +380,7 @@ int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
 	task_sig(m, task);
 	task_cap(m, task);
 	cpuset_task_status_allowed(m, task);
+	task_vs_id(m, task);
 #if defined(CONFIG_S390)
 	task_show_regs(m, task);
 #endif
@@ -446,6 +496,17 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 				+ task->real_start_time.tv_nsec;
 	/* convert nsec -> ticks */
 	start_time = nsec_to_clock_t(start_time);
+
+	/* fixup start time for virt uptime */
+	if (vx_flags(VXF_VIRT_UPTIME, 0)) {
+		unsigned long long bias =
+			current->vx_info->cvirt.bias_clock;
+
+		if (start_time > bias)
+			start_time -= bias;
+		else
+			start_time = 0;
+	}
 
 	seq_printf(m, "%d (%s) %c %d %d %d %d %d %u %lu \
 %lu %lu %lu %lu %lu %ld %ld %ld %ld %d 0 %llu %lu %ld %lu %lu %lu %lu %lu \

@@ -7,6 +7,7 @@
 #include <linux/mount.h>
 #include <linux/reiserfs_fs.h>
 #include <linux/time.h>
+#include <linux/mount.h>
 #include <asm/uaccess.h>
 #include <linux/pagemap.h>
 #include <linux/smp_lock.h>
@@ -23,7 +24,7 @@
 int reiserfs_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 		   unsigned long arg)
 {
-	unsigned int flags;
+	unsigned int flags, oldflags;
 	int err = 0;
 
 	switch (cmd) {
@@ -43,6 +44,7 @@ int reiserfs_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 
 		flags = REISERFS_I(inode)->i_attrs;
 		i_attrs_to_sd_attrs(inode, (__u16 *) & flags);
+		flags &= REISERFS_FL_USER_VISIBLE;
 		return put_user(flags, (int __user *)arg);
 	case REISERFS_IOC_SETFLAGS:{
 			if (!reiserfs_attrs(inode->i_sb))
@@ -59,6 +61,10 @@ int reiserfs_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 			if (get_user(flags, (int __user *)arg)) {
 				err = -EFAULT;
 				goto setflags_out;
+			}
+			if (IS_BARRIER(inode)) {
+				vxwprintk_task(1, "messing with the barrier.");
+				return -EACCES;
 			}
 			/*
 			 * Is it quota file? Do not allow user to mess with it
@@ -84,6 +90,10 @@ int reiserfs_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 					goto setflags_out;
 				}
 			}
+
+			oldflags = REISERFS_I(inode)->i_attrs;
+			flags = flags & REISERFS_FL_USER_MODIFIABLE;
+			flags |= oldflags & ~REISERFS_FL_USER_MODIFIABLE;
 			sd_attrs_to_i_attrs(flags, inode);
 			REISERFS_I(inode)->i_attrs = flags;
 			inode->i_ctime = CURRENT_TIME_SEC;

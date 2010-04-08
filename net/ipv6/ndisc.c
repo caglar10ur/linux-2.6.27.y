@@ -551,7 +551,7 @@ static void ndisc_send_na(struct net_device *dev, struct neighbour *neigh,
 	} else {
 		if (ipv6_dev_get_saddr(dev_net(dev), dev, daddr,
 				       inet6_sk(dev_net(dev)->ipv6.ndisc_sk)->srcprefs,
-				       &tmpaddr))
+				       &tmpaddr, NULL /* FIXME: ? */ ))
 			return;
 		src_addr = &tmpaddr;
 	}

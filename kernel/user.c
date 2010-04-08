@@ -243,12 +243,15 @@ static struct kobj_type uids_ktype = {
 };
 
 /* create /sys/kernel/uids/<uid>/cpu_share file for this user */
-static int uids_user_create(struct user_struct *up)
+static int uids_user_create(struct user_namespace *ns, struct user_struct *up)
 {
 	struct kobject *kobj = &up->kobj;
-	int error;
+	int error = 0;
 
 	memset(kobj, 0, sizeof(struct kobject));
+	if (ns != &init_user_ns)
+		goto done;
+
 	kobj->kset = uids_kset;
 	error = kobject_init_and_add(kobj, &uids_ktype, NULL, "%d", up->uid);
 	if (error) {
@@ -272,7 +275,7 @@ int __init uids_sysfs_init(void)
 	if (!uids_kset)
 		return -ENOMEM;
 
-	return uids_user_create(&root_user);
+	return uids_user_create(NULL, &root_user);
 }
 
 /* work function to remove sysfs directory for a user and free up
@@ -302,9 +305,11 @@ static void remove_user_sysfs_dir(struct work_struct *w)
 	if (!remove_user)
 		goto done;
 
-	kobject_uevent(&up->kobj, KOBJ_REMOVE);
-	kobject_del(&up->kobj);
-	kobject_put(&up->kobj);
+	if (up->kobj.name) {
+		kobject_uevent(&up->kobj, KOBJ_REMOVE);
+		kobject_del(&up->kobj);
+		kobject_put(&up->kobj);
+	}
 
 	sched_destroy_user(up);
 	key_put(up->uid_keyring);
@@ -332,7 +337,8 @@ static inline void free_user(struct user_struct *up, unsigned long flags)
 #else	/* CONFIG_USER_SCHED && CONFIG_SYSFS */
 
 int uids_sysfs_init(void) { return 0; }
-static inline int uids_user_create(struct user_struct *up) { return 0; }
+static inline int uids_user_create(struct user_namespace *ns,
+	struct user_struct *up) { return 0; }
 static inline void uids_mutex_lock(void) { }
 static inline void uids_mutex_unlock(void) { }
 
@@ -409,7 +415,7 @@ struct user_struct *alloc_uid(struct user_namespace *ns, uid_t uid)
 		if (sched_create_user(new) < 0)
 			goto out_free_user;
 
-		if (uids_user_create(new))
+		if (uids_user_create(ns, new))
 			goto out_destoy_sched;
 
 		/*

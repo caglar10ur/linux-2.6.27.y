@@ -22,6 +22,7 @@
 #include <linux/signal.h>
 #include <linux/regset.h>
 #include <linux/elf.h>
+#include <linux/vs_base.h>
 
 #include <asm/pgtable.h>
 #include <asm/processor.h>

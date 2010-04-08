@@ -58,6 +58,7 @@
 #include <linux/nfs4_acl.h>
 #include <linux/sunrpc/gss_api.h>
 #include <linux/sunrpc/svcauth_gss.h>
+#include <linux/vs_tag.h>
 
 #define NFSDDBG_FACILITY		NFSDDBG_XDR
 
@@ -1704,14 +1705,18 @@ out_acl:
 		WRITE32(stat.nlink);
 	}
 	if (bmval1 & FATTR4_WORD1_OWNER) {
-		status = nfsd4_encode_user(rqstp, stat.uid, &p, &buflen);
+		status = nfsd4_encode_user(rqstp,
+			TAGINO_UID(DX_TAG(dentry->d_inode),
+			stat.uid, stat.tag), &p, &buflen);
 		if (status == nfserr_resource)
 			goto out_resource;
 		if (status)
 			goto out;
 	}
 	if (bmval1 & FATTR4_WORD1_OWNER_GROUP) {
-		status = nfsd4_encode_group(rqstp, stat.gid, &p, &buflen);
+		status = nfsd4_encode_group(rqstp,
+			TAGINO_GID(DX_TAG(dentry->d_inode),
+			stat.gid, stat.tag), &p, &buflen);
 		if (status == nfserr_resource)
 			goto out_resource;
 		if (status)

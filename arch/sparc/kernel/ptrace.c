@@ -22,6 +22,7 @@
 #include <linux/regset.h>
 #include <linux/elf.h>
 #include <linux/tracehook.h>
+#include <linux/vs_base.h>
 
 #include <asm/pgtable.h>
 #include <asm/system.h>

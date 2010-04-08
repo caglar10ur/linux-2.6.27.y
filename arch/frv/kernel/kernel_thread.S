@@ -37,7 +37,7 @@ kernel_thread:
 
 	# start by forking the current process, but with shared VM
 	setlos.p	#__NR_clone,gr7		; syscall number
-	ori		gr10,#CLONE_VM,gr8	; first syscall arg	[clone_flags]
+	ori		gr10,#CLONE_KT,gr8	; first syscall arg	[clone_flags]
 	sethi.p		#0xe4e4,gr9		; second syscall arg	[newsp]
 	setlo		#0xe4e4,gr9
 	setlos.p	#0,gr10			; third syscall arg	[parent_tidptr]

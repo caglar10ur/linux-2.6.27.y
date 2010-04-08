@@ -79,6 +79,8 @@
 #include <linux/oom.h>
 #include <linux/elf.h>
 #include <linux/pid_namespace.h>
+#include <linux/vs_context.h>
+#include <linux/vs_network.h>
 #include "internal.h"
 
 /* NOTE:
@@ -1421,6 +1423,8 @@ static struct inode *proc_pid_make_inode(struct super_block * sb, struct task_st
 		inode->i_uid = task->euid;
 		inode->i_gid = task->egid;
 	}
+	/* procfs is xid tagged */
+	inode->i_tag = (tag_t)vx_task_xid(task);
 	security_task_to_inode(task, inode);
 
 out:
@@ -1961,6 +1965,13 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
 	if (!task)
 		goto out_no_task;
 
+	/* TODO: maybe we can come up with a generic approach? */
+	if (task_vx_flags(task, VXF_HIDE_VINFO, 0) &&
+		(dentry->d_name.len == 5) &&
+		(!memcmp(dentry->d_name.name, "vinfo", 5) ||
+		!memcmp(dentry->d_name.name, "ninfo", 5)))
+		goto out;
+
 	/*
 	 * Yes, it does not scale. And it should not. Don't add
 	 * new entries into /proc/<tgid>/ without very good reasons.
@@ -2348,7 +2359,7 @@ out_iput:
 static struct dentry *proc_base_lookup(struct inode *dir, struct dentry *dentry)
 {
 	struct dentry *error;
-	struct task_struct *task = get_proc_task(dir);
+	struct task_struct *task = get_proc_task_real(dir);
 	const struct pid_entry *p, *last;
 
 	error = ERR_PTR(-ENOENT);
@@ -2431,6 +2442,9 @@ static int proc_tgid_io_accounting(struct task_struct *task, char *buffer)
 static const struct file_operations proc_task_operations;
 static const struct inode_operations proc_task_inode_operations;
 
+extern int proc_pid_vx_info(struct task_struct *, char *);
+extern int proc_pid_nx_info(struct task_struct *, char *);
+
 static const struct pid_entry tgid_base_stuff[] = {
 	DIR("task",       S_IRUGO|S_IXUGO, task),
 	DIR("fd",         S_IRUSR|S_IXUSR, fd),
@@ -2485,6 +2499,8 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_CGROUPS
 	REG("cgroup",  S_IRUGO, cgroup),
 #endif
+	INF("vinfo",      S_IRUGO, pid_vx_info),
+	INF("ninfo",	  S_IRUGO, pid_nx_info),
 	INF("oom_score",  S_IRUGO, oom_score),
 	REG("oom_adj",    S_IRUGO|S_IWUSR, oom_adjust),
 #ifdef CONFIG_AUDITSYSCALL
@@ -2500,6 +2516,7 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_TASK_IO_ACCOUNTING
 	INF("io",	S_IRUGO, tgid_io_accounting),
 #endif
+	ONE("nsproxy",	S_IRUGO, pid_nsproxy),
 };
 
 static int proc_tgid_base_readdir(struct file * filp,
@@ -2696,7 +2713,7 @@ retry:
 	iter.task = NULL;
 	pid = find_ge_pid(iter.tgid, ns);
 	if (pid) {
-		iter.tgid = pid_nr_ns(pid, ns);
+		iter.tgid = pid_unmapped_nr_ns(pid, ns);
 		iter.task = pid_task(pid, PIDTYPE_PID);
 		/* What we to know is if the pid we have find is the
 		 * pid of a thread_group_leader.  Testing for task
@@ -2726,7 +2743,7 @@ static int proc_pid_fill_cache(struct file *filp, void *dirent, filldir_t filldi
 	struct tgid_iter iter)
 {
 	char name[PROC_NUMBUF];
-	int len = snprintf(name, sizeof(name), "%d", iter.tgid);
+	int len = snprintf(name, sizeof(name), "%d", vx_map_tgid(iter.tgid));
 	return proc_fill_cache(filp, dirent, filldir, name, len,
 				proc_pid_instantiate, iter.task, NULL);
 }
@@ -2735,7 +2752,7 @@ static int proc_pid_fill_cache(struct file *filp, void *dirent, filldir_t filldi
 int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 {
 	unsigned int nr = filp->f_pos - FIRST_PROCESS_ENTRY;
-	struct task_struct *reaper = get_proc_task(filp->f_path.dentry->d_inode);
+	struct task_struct *reaper = get_proc_task_real(filp->f_path.dentry->d_inode);
 	struct tgid_iter iter;
 	struct pid_namespace *ns;
 
@@ -2755,6 +2772,8 @@ int proc_pid_readdir(struct file * filp, void * dirent, filldir_t filldir)
 	     iter.task;
 	     iter.tgid += 1, iter = next_tgid(ns, iter)) {
 		filp->f_pos = iter.tgid + TGID_OFFSET;
+		if (!vx_proc_task_visible(iter.task))
+			continue;
 		if (proc_pid_fill_cache(filp, dirent, filldir, iter) < 0) {
 			put_task_struct(iter.task);
 			goto out;
@@ -2896,6 +2915,8 @@ static struct dentry *proc_task_lookup(struct inode *dir, struct dentry * dentry
 
 	tid = name_to_int(dentry);
 	if (tid == ~0U)
+		goto out;
+	if (vx_current_initpid(tid))
 		goto out;
 
 	ns = dentry->d_sb->s_fs_info;

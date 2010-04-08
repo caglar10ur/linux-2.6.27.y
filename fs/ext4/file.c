@@ -175,5 +175,6 @@ const struct inode_operations ext4_file_inode_operations = {
 #endif
 	.permission	= ext4_permission,
 	.fallocate	= ext4_fallocate,
+	.sync_flags	= ext4_sync_flags,
 };
 

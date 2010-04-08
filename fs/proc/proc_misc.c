@@ -57,6 +57,8 @@
 #include <asm/div64.h>
 #include "internal.h"
 
+#include <linux/vs_cvirt.h>
+
 #define LOAD_INT(x) ((x) >> FSHIFT)
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 /*
@@ -84,22 +86,38 @@ static int proc_calc_metrics(char *page, char **start, off_t off,
 static int loadavg_read_proc(char *page, char **start, off_t off,
 				 int count, int *eof, void *data)
 {
+	unsigned long running;
+	unsigned int threads;
 	int a, b, c;
 	int len;
 	unsigned long seq;
 
 	do {
 		seq = read_seqbegin(&xtime_lock);
-		a = avenrun[0] + (FIXED_1/200);
-		b = avenrun[1] + (FIXED_1/200);
-		c = avenrun[2] + (FIXED_1/200);
+		if (vx_flags(VXF_VIRT_LOAD, 0)) {
+			struct vx_info *vxi = current->vx_info;
+
+			a = vxi->cvirt.load[0] + (FIXED_1/200);
+			b = vxi->cvirt.load[1] + (FIXED_1/200);
+			c = vxi->cvirt.load[2] + (FIXED_1/200);
+
+			running = atomic_read(&vxi->cvirt.nr_running);
+			threads = atomic_read(&vxi->cvirt.nr_threads);
+		} else {
+			a = avenrun[0] + (FIXED_1/200);
+			b = avenrun[1] + (FIXED_1/200);
+			c = avenrun[2] + (FIXED_1/200);
+
+			running = nr_running();
+			threads = nr_threads;
+		}
 	} while (read_seqretry(&xtime_lock, seq));
 
 	len = sprintf(page,"%d.%02d %d.%02d %d.%02d %ld/%d %d\n",
 		LOAD_INT(a), LOAD_FRAC(a),
 		LOAD_INT(b), LOAD_FRAC(b),
 		LOAD_INT(c), LOAD_FRAC(c),
-		nr_running(), nr_threads,
+		running, threads,
 		task_active_pid_ns(current)->last_pid);
 	return proc_calc_metrics(page, start, off, count, eof, len);
 }
@@ -115,6 +133,9 @@ static int uptime_read_proc(char *page, char **start, off_t off,
 	do_posix_clock_monotonic_gettime(&uptime);
 	monotonic_to_bootbased(&uptime);
 	cputime_to_timespec(idletime, &idle);
+	if (vx_flags(VXF_VIRT_UPTIME, 0))
+		vx_vsi_uptime(&uptime, &idle);
+
 	len = sprintf(page,"%lu.%02lu %lu.%02lu\n",
 			(unsigned long) uptime.tv_sec,
 			(uptime.tv_nsec / (NSEC_PER_SEC / 100)),
@@ -151,7 +172,7 @@ static int meminfo_read_proc(char *page, char **start, off_t off,
 
 	cached = global_page_state(NR_FILE_PAGES) -
 			total_swapcache_pages - i.bufferram;
-	if (cached < 0)
+	if (cached < 0 || vx_flags(VXF_VIRT_MEM, 0))
 		cached = 0;
 
 	get_vmalloc_info(&vmi);

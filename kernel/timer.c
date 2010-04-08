@@ -37,6 +37,10 @@
 #include <linux/delay.h>
 #include <linux/tick.h>
 #include <linux/kallsyms.h>
+#include <linux/vs_base.h>
+#include <linux/vs_cvirt.h>
+#include <linux/vs_pid.h>
+#include <linux/vserver/sched.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -1082,12 +1086,6 @@ SYSCALL_DEFINE1(alarm, unsigned int, seconds)
 
 #endif
 
-#ifndef __alpha__
-
-/*
- * The Alpha uses getxpid, getxuid, and getxgid instead.  Maybe this
- * should be moved into arch/i386 instead?
- */
 
 /**
  * sys_getpid - return the thread group id of the current process
@@ -1116,9 +1114,22 @@ SYSCALL_DEFINE0(getppid)
 	rcu_read_lock();
 	pid = task_tgid_vnr(current->real_parent);
 	rcu_read_unlock();
-
-	return pid;
+	return vx_map_pid(pid);
 }
+
+#ifdef __alpha__
+
+/*
+ * The Alpha uses getxpid, getxuid, and getxgid instead.
+ */
+
+asmlinkage long do_getxpid(long *ppid)
+{
+	*ppid = sys_getppid();
+	return sys_getpid();
+}
+
+#else /* _alpha_ */
 
 SYSCALL_DEFINE0(getuid)
 {
@@ -1290,6 +1301,8 @@ int do_sysinfo(struct sysinfo *info)
 			tp.tv_nsec = tp.tv_nsec - NSEC_PER_SEC;
 			tp.tv_sec++;
 		}
+		if (vx_flags(VXF_VIRT_UPTIME, 0))
+			vx_vsi_uptime(&tp, NULL);
 		info->uptime = tp.tv_sec + (tp.tv_nsec ? 1 : 0);
 
 		info->loads[0] = avenrun[0] << (SI_LOAD_SHIFT - FSHIFT);

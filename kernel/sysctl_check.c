@@ -39,6 +39,7 @@ static const struct trans_ctl_table trans_kern_table[] = {
 
 	{ KERN_PANIC,			"panic" },
 	{ KERN_REALROOTDEV,		"real-root-dev" },
+	{ KERN_VSHELPER,		"vshelper", },
 
 	{ KERN_SPARC_REBOOT,		"reboot-cmd" },
 	{ KERN_CTLALTDEL,		"ctrl-alt-del" },
@@ -1217,6 +1218,22 @@ static const struct trans_ctl_table trans_frv_table[] = {
 	{}
 };
 
+static struct trans_ctl_table trans_vserver_table[] = {
+	{ 1,	"debug_switch" },
+	{ 2,	"debug_xid" },
+	{ 3,	"debug_nid" },
+	{ 4,	"debug_tag" },
+	{ 5,	"debug_net" },
+	{ 6,	"debug_limit" },
+	{ 7,	"debug_cres" },
+	{ 8,	"debug_dlim" },
+	{ 9,	"debug_quota" },
+	{ 10,	"debug_cvirt" },
+	{ 11,	"debug_space" },
+	{ 12,	"debug_misc" },
+	{}
+};
+
 static const struct trans_ctl_table trans_root_table[] = {
 	{ CTL_KERN,	"kernel",	trans_kern_table },
 	{ CTL_VM,	"vm",		trans_vm_table },
@@ -1233,6 +1250,7 @@ static const struct trans_ctl_table trans_root_table[] = {
 	{ CTL_SUNRPC,	"sunrpc",	trans_sunrpc_table },
 	{ CTL_PM,	"pm",		trans_pm_table },
 	{ CTL_FRV,	"frv",		trans_frv_table },
+	{ CTL_VSERVER,	"vserver",	trans_vserver_table },
 	{}
 };
 

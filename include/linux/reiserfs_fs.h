@@ -837,6 +837,11 @@ struct stat_data_v1 {
 #define REISERFS_COMPR_FL     FS_COMPR_FL
 #define REISERFS_NOTAIL_FL    FS_NOTAIL_FL
 
+/* unfortunately reiserfs sdattr is only 16 bit */
+#define REISERFS_IXUNLINK_FL  (FS_IXUNLINK_FL >> 16)
+#define REISERFS_BARRIER_FL   (FS_BARRIER_FL >> 16)
+#define REISERFS_COW_FL       (FS_COW_FL >> 16)
+
 /* persistent flags that file inherits from the parent directory */
 #define REISERFS_INHERIT_MASK ( REISERFS_IMMUTABLE_FL |	\
 				REISERFS_SYNC_FL |	\
@@ -845,6 +850,9 @@ struct stat_data_v1 {
 				REISERFS_SECRM_FL |	\
 				REISERFS_COMPR_FL |	\
 				REISERFS_NOTAIL_FL )
+
+#define REISERFS_FL_USER_VISIBLE	0x80FF
+#define REISERFS_FL_USER_MODIFIABLE	0x80FF
 
 /* Stat Data on disk (reiserfs version of UFS disk inode minus the
    address blocks) */
@@ -1911,6 +1919,7 @@ static inline void reiserfs_update_sd(struct reiserfs_transaction_handle *th,
 void sd_attrs_to_i_attrs(__u16 sd_attrs, struct inode *inode);
 void i_attrs_to_sd_attrs(struct inode *inode, __u16 * sd_attrs);
 int reiserfs_setattr(struct dentry *dentry, struct iattr *attr);
+int reiserfs_sync_flags(struct inode *inode);
 
 /* namei.c */
 void set_de_name_and_namelen(struct reiserfs_dir_entry *de);

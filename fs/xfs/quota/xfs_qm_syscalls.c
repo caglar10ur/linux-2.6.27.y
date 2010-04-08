@@ -426,7 +426,7 @@ xfs_qm_scall_quotaon(
 	uint		accflags;
 	__int64_t	sbflags;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!vx_capable(CAP_SYS_ADMIN, VXC_QUOTA_CTL))
 		return XFS_ERROR(EPERM);
 
 	flags &= (XFS_ALL_QUOTA_ACCT | XFS_ALL_QUOTA_ENFD);

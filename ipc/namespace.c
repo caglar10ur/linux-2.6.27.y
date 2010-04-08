@@ -9,6 +9,8 @@
 #include <linux/rcupdate.h>
 #include <linux/nsproxy.h>
 #include <linux/slab.h>
+#include <linux/vs_base.h>
+#include <linux/vserver/global.h>
 
 #include "util.h"
 
@@ -35,6 +37,7 @@ static struct ipc_namespace *clone_ipc_ns(struct ipc_namespace *old_ns)
 	register_ipcns_notifier(ns);
 
 	kref_init(&ns->kref);
+	atomic_inc(&vs_global_ipc_ns);
 	return ns;
 }
 
@@ -101,6 +104,7 @@ void free_ipc_ns(struct kref *kref)
 	sem_exit_ns(ns);
 	msg_exit_ns(ns);
 	shm_exit_ns(ns);
+	atomic_dec(&vs_global_ipc_ns);
 	kfree(ns);
 	atomic_dec(&nr_ipc_ns);
 

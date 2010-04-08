@@ -114,6 +114,7 @@ static int ngroups_max = NGROUPS_MAX;
 #ifdef CONFIG_MODULES
 extern char modprobe_path[];
 #endif
+extern char vshelper_path[];
 #ifdef CONFIG_CHR_DEV_SG
 extern int sg_big_buff;
 #endif
@@ -503,6 +504,15 @@ static struct ctl_table kern_table[] = {
 		.strategy	= &sysctl_string,
 	},
 #endif
+	{
+		.ctl_name	= KERN_VSHELPER,
+		.procname	= "vshelper",
+		.data		= &vshelper_path,
+		.maxlen		= 256,
+		.mode		= 0644,
+		.proc_handler	= &proc_dostring,
+		.strategy	= &sysctl_string,
+	},
 #ifdef CONFIG_CHR_DEV_SG
 	{
 		.ctl_name	= KERN_SG_BIG_BUFF,

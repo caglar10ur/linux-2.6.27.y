@@ -8,6 +8,7 @@
  */
 
 #include <linux/fs.h>
+#include <linux/mount.h>
 #include <linux/jbd.h>
 #include <linux/capability.h>
 #include <linux/ext3_fs.h>
@@ -16,6 +17,7 @@
 #include <linux/time.h>
 #include <linux/compat.h>
 #include <linux/smp_lock.h>
+#include <linux/vs_tag.h>
 #include <asm/uaccess.h>
 
 int ext3_ioctl (struct inode * inode, struct file * filp, unsigned int cmd,
@@ -56,6 +58,11 @@ int ext3_ioctl (struct inode * inode, struct file * filp, unsigned int cmd,
 		if (!S_ISDIR(inode->i_mode))
 			flags &= ~EXT3_DIRSYNC_FL;
 
+		if (IS_BARRIER(inode)) {
+			vxwprintk_task(1, "messing with the barrier.");
+			return -EACCES;
+		}
+
 		mutex_lock(&inode->i_mutex);
 		/* Is it quota file? Do not allow user to mess with it */
 		if (IS_NOQUOTA(inode)) {
@@ -74,7 +81,9 @@ int ext3_ioctl (struct inode * inode, struct file * filp, unsigned int cmd,
 		 *
 		 * This test looks nicer. Thanks to Pauline Middelink
 		 */
-		if ((flags ^ oldflags) & (EXT3_APPEND_FL | EXT3_IMMUTABLE_FL)) {
+		if ((oldflags & EXT3_IMMUTABLE_FL) ||
+			((flags ^ oldflags) & (EXT3_APPEND_FL |
+			EXT3_IMMUTABLE_FL | EXT3_IXUNLINK_FL))) {
 			if (!capable(CAP_LINUX_IMMUTABLE)) {
 				mutex_unlock(&inode->i_mutex);
 				err = -EPERM;

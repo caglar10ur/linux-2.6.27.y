@@ -38,6 +38,9 @@
 #include <linux/kobject.h>
 #include <linux/mutex.h>
 #include <linux/file.h>
+#include <linux/devpts_fs.h>
+#include <linux/proc_fs.h>
+#include <linux/vs_context.h>
 #include <asm/uaccess.h>
 #include "internal.h"
 
@@ -887,11 +890,17 @@ struct vfsmount *
 vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void *data)
 {
 	struct vfsmount *mnt;
+	struct super_block *sb;
 	char *secdata = NULL;
 	int error;
 
 	if (!type)
 		return ERR_PTR(-ENODEV);
+
+	error = -EPERM;
+	if ((type->fs_flags & FS_BINARY_MOUNTDATA) &&
+		!vx_capable(CAP_SYS_ADMIN, VXC_BINARY_MOUNT))
+		goto out;
 
 	error = -ENOMEM;
 	mnt = alloc_vfsmnt(name);
@@ -913,7 +922,14 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void 
 		goto out_free_secdata;
 	BUG_ON(!mnt->mnt_sb);
 
- 	error = security_sb_kern_mount(mnt->mnt_sb, secdata);
+	sb = mnt->mnt_sb;
+	error = -EPERM;
+	if (!vx_capable(CAP_SYS_ADMIN, VXC_BINARY_MOUNT) && !sb->s_bdev &&
+		(sb->s_magic != PROC_SUPER_MAGIC) &&
+		(sb->s_magic != DEVPTS_SUPER_MAGIC))
+		goto out_sb;
+
+	error = security_sb_kern_mount(sb, secdata);
  	if (error)
  		goto out_sb;
 

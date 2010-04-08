@@ -1225,10 +1225,10 @@ munmap_back:
 	if (correct_wcount)
 		atomic_inc(&inode->i_writecount);
 out:
-	mm->total_vm += len >> PAGE_SHIFT;
+	vx_vmpages_add(mm, len >> PAGE_SHIFT);
 	vm_stat_account(mm, vm_flags, file, len >> PAGE_SHIFT);
 	if (vm_flags & VM_LOCKED) {
-		mm->locked_vm += len >> PAGE_SHIFT;
+		vx_vmlocked_add(mm, len >> PAGE_SHIFT);
 		make_pages_present(addr, addr + len);
 	}
 	if ((flags & MAP_POPULATE) && !(flags & MAP_NONBLOCK))
@@ -1577,9 +1577,9 @@ static int acct_stack_growth(struct vm_area_struct * vma, unsigned long size, un
 		return -ENOMEM;
 
 	/* Ok, everything looks good - let it rip */
-	mm->total_vm += grow;
+	vx_vmpages_add(mm, grow);
 	if (vma->vm_flags & VM_LOCKED)
-		mm->locked_vm += grow;
+		vx_vmlocked_add(mm, grow);
 	vm_stat_account(mm, vma->vm_flags, vma->vm_file, grow);
 	return 0;
 }
@@ -1747,9 +1747,9 @@ static void remove_vma_list(struct mm_struct *mm, struct vm_area_struct *vma)
 	do {
 		long nrpages = vma_pages(vma);
 
-		mm->total_vm -= nrpages;
+		vx_vmpages_sub(mm, nrpages);
 		if (vma->vm_flags & VM_LOCKED)
-			mm->locked_vm -= nrpages;
+			vx_vmlocked_sub(mm, nrpages);
 		vm_stat_account(mm, vma->vm_flags, vma->vm_file, -nrpages);
 		vma = remove_vma(vma);
 	} while (vma);
@@ -1996,6 +1996,8 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 		lock_limit >>= PAGE_SHIFT;
 		if (locked > lock_limit && !capable(CAP_IPC_LOCK))
 			return -EAGAIN;
+		if (!vx_vmlocked_avail(mm, len >> PAGE_SHIFT))
+			return -ENOMEM;
 	}
 
 	/*
@@ -2022,7 +2024,8 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 	if (mm->map_count > sysctl_max_map_count)
 		return -ENOMEM;
 
-	if (security_vm_enough_memory(len >> PAGE_SHIFT))
+	if (security_vm_enough_memory(len >> PAGE_SHIFT) ||
+		!vx_vmpages_avail(mm, len >> PAGE_SHIFT))
 		return -ENOMEM;
 
 	/* Can we just expand an old private anonymous mapping? */
@@ -2047,9 +2050,9 @@ unsigned long do_brk(unsigned long addr, unsigned long len)
 	vma->vm_page_prot = vm_get_page_prot(flags);
 	vma_link(mm, vma, prev, rb_link, rb_parent);
 out:
-	mm->total_vm += len >> PAGE_SHIFT;
+	vx_vmpages_add(mm, len >> PAGE_SHIFT);
 	if (flags & VM_LOCKED) {
-		mm->locked_vm += len >> PAGE_SHIFT;
+		vx_vmlocked_add(mm, len >> PAGE_SHIFT);
 		make_pages_present(addr, addr + len);
 	}
 	return addr;
@@ -2081,6 +2084,11 @@ void exit_mmap(struct mm_struct *mm)
 	vm_unacct_memory(nr_accounted);
 	free_pgtables(tlb, vma, FIRST_USER_ADDRESS, 0);
 	tlb_finish_mmu(tlb, 0, end);
+
+	set_mm_counter(mm, file_rss, 0);
+	set_mm_counter(mm, anon_rss, 0);
+	vx_vmpages_sub(mm, mm->total_vm);
+	vx_vmlocked_sub(mm, mm->locked_vm);
 
 	/*
 	 * Walk the list again, actually closing and freeing it,
@@ -2121,7 +2129,8 @@ int insert_vm_struct(struct mm_struct * mm, struct vm_area_struct * vma)
 	if (__vma && __vma->vm_start < vma->vm_end)
 		return -ENOMEM;
 	if ((vma->vm_flags & VM_ACCOUNT) &&
-	     security_vm_enough_memory_mm(mm, vma_pages(vma)))
+		(security_vm_enough_memory_mm(mm, vma_pages(vma)) ||
+		!vx_vmpages_avail(mm, vma_pages(vma))))
 		return -ENOMEM;
 	vma_link(mm, vma, prev, rb_link, rb_parent);
 	return 0;
@@ -2196,6 +2205,8 @@ int may_expand_vm(struct mm_struct *mm, unsigned long npages)
 	lim = current->signal->rlim[RLIMIT_AS].rlim_cur >> PAGE_SHIFT;
 
 	if (cur + npages > lim)
+		return 0;
+	if (!vx_vmpages_avail(mm, npages))
 		return 0;
 	return 1;
 }
@@ -2274,8 +2285,7 @@ int install_special_mapping(struct mm_struct *mm,
 		return -ENOMEM;
 	}
 
-	mm->total_vm += len >> PAGE_SHIFT;
-
+	vx_vmpages_add(mm, len >> PAGE_SHIFT);
 	return 0;
 }
 

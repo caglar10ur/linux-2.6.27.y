@@ -62,6 +62,7 @@ EXPORT_SYMBOL(sys_tz);
 SYSCALL_DEFINE1(time, time_t __user *, tloc)
 {
 	time_t i = get_seconds();
+/*	FIXME: do_gettimeofday(&tv) -> vx_gettimeofday(&tv) */
 
 	if (tloc) {
 		if (put_user(i,tloc))
@@ -91,7 +92,7 @@ SYSCALL_DEFINE1(stime, time_t __user *, tptr)
 	if (err)
 		return err;
 
-	do_settimeofday(&tv);
+	vx_settimeofday(&tv);
 	return 0;
 }
 
@@ -102,7 +103,7 @@ SYSCALL_DEFINE2(gettimeofday, struct timeval __user *, tv,
 {
 	if (likely(tv != NULL)) {
 		struct timeval ktv;
-		do_gettimeofday(&ktv);
+		vx_gettimeofday(&ktv);
 		if (copy_to_user(tv, &ktv, sizeof(ktv)))
 			return -EFAULT;
 	}
@@ -177,7 +178,7 @@ int do_sys_settimeofday(struct timespec *tv, struct timezone *tz)
 		/* SMP safe, again the code in arch/foo/time.c should
 		 * globally block out interrupts when it runs.
 		 */
-		return do_settimeofday(tv);
+		return vx_settimeofday(tv);
 	}
 	return 0;
 }
@@ -309,7 +310,7 @@ void getnstimeofday(struct timespec *tv)
 {
 	struct timeval x;
 
-	do_gettimeofday(&x);
+	vx_gettimeofday(&x);
 	tv->tv_sec = x.tv_sec;
 	tv->tv_nsec = x.tv_usec * NSEC_PER_USEC;
 }

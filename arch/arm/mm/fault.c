@@ -292,7 +292,8 @@ do_page_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
 		 * happened to us that made us unable to handle
 		 * the page fault gracefully.
 		 */
-		printk("VM: killing process %s\n", tsk->comm);
+		printk("VM: killing process %s(%d:#%u)\n",
+			tsk->comm, task_pid_nr(tsk), tsk->xid);
 		do_group_exit(SIGKILL);
 		return 0;
 	}

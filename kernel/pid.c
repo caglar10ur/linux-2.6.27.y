@@ -36,6 +36,8 @@
 #include <linux/pid_namespace.h>
 #include <linux/init_task.h>
 #include <linux/syscalls.h>
+#include <linux/vs_pid.h>
+#include <linux/vserver/global.h>
 
 #define pid_hashfn(nr, ns)	\
 	hash_long((unsigned long)nr + (unsigned long)ns, pidhash_shift)
@@ -305,7 +307,7 @@ EXPORT_SYMBOL_GPL(find_pid_ns);
 
 struct pid *find_vpid(int nr)
 {
-	return find_pid_ns(nr, current->nsproxy->pid_ns);
+	return find_pid_ns(vx_rmap_pid(nr), current->nsproxy->pid_ns);
 }
 EXPORT_SYMBOL_GPL(find_vpid);
 
@@ -365,6 +367,9 @@ void transfer_pid(struct task_struct *old, struct task_struct *new,
 struct task_struct *pid_task(struct pid *pid, enum pid_type type)
 {
 	struct task_struct *result = NULL;
+
+	if (type == PIDTYPE_REALPID)
+		type = PIDTYPE_PID;
 	if (pid) {
 		struct hlist_node *first;
 		first = rcu_dereference(pid->tasks[type].first);
@@ -388,14 +393,14 @@ EXPORT_SYMBOL(find_task_by_pid_type_ns);
 
 struct task_struct *find_task_by_vpid(pid_t vnr)
 {
-	return find_task_by_pid_type_ns(PIDTYPE_PID, vnr,
+	return find_task_by_pid_type_ns(PIDTYPE_PID, vx_rmap_pid(vnr),
 			current->nsproxy->pid_ns);
 }
 EXPORT_SYMBOL(find_task_by_vpid);
 
 struct task_struct *find_task_by_pid_ns(pid_t nr, struct pid_namespace *ns)
 {
-	return find_task_by_pid_type_ns(PIDTYPE_PID, nr, ns);
+	return find_task_by_pid_type_ns(PIDTYPE_PID, vx_rmap_pid(nr), ns);
 }
 EXPORT_SYMBOL(find_task_by_pid_ns);
 
@@ -431,7 +436,7 @@ struct pid *find_get_pid(pid_t nr)
 }
 EXPORT_SYMBOL_GPL(find_get_pid);
 
-pid_t pid_nr_ns(struct pid *pid, struct pid_namespace *ns)
+pid_t pid_unmapped_nr_ns(struct pid *pid, struct pid_namespace *ns)
 {
 	struct upid *upid;
 	pid_t nr = 0;
@@ -442,6 +447,11 @@ pid_t pid_nr_ns(struct pid *pid, struct pid_namespace *ns)
 			nr = upid->nr;
 	}
 	return nr;
+}
+
+pid_t pid_nr_ns(struct pid *pid, struct pid_namespace *ns)
+{
+	return vx_map_pid(pid_unmapped_nr_ns(pid, ns));
 }
 
 pid_t pid_vnr(struct pid *pid)

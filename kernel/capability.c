@@ -13,6 +13,7 @@
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/pid_namespace.h>
+#include <linux/vs_context.h>
 #include <asm/uaccess.h>
 
 /*
@@ -166,6 +167,8 @@ static inline int cap_set_pg(int pgrp_nr, kernel_cap_t *effective,
 
 	pgrp = find_vpid(pgrp_nr);
 	do_each_pid_task(pgrp, PIDTYPE_PGID, g) {
+		if (!vx_check(g->xid, VS_ADMIN_P | VS_IDENT))
+			continue;
 		target = g;
 		while_each_thread(g, target) {
 			if (!security_capset_check(target, effective,
@@ -486,6 +489,8 @@ SYSCALL_DEFINE2(capset, cap_user_header_t, header, const cap_user_data_t, data)
 	return ret;
 }
 
+#include <linux/vserver/base.h>
+
 /**
  * capable - Determine if the current task has a superior capability in effect
  * @cap: The capability to be tested for
@@ -498,6 +503,9 @@ SYSCALL_DEFINE2(capset, cap_user_header_t, header, const cap_user_data_t, data)
  */
 int capable(int cap)
 {
+	/* here for now so we don't require task locking */
+	if (vs_check_bit(VXC_CAP_MASK, cap) && !vx_mcaps(1L << cap))
+		return 0;
 	if (has_capability(current, cap)) {
 		current->flags |= PF_SUPERPRIV;
 		return 1;

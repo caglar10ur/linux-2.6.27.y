@@ -16,6 +16,7 @@
 #include <linux/cryptohash.h>
 #include <linux/kernel.h>
 #include <net/tcp.h>
+#include <net/route.h>
 
 /* Timestamps: lowest 9 bits store TCP options */
 #define TSBITS 9

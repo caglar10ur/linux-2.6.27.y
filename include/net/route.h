@@ -28,6 +28,7 @@
 #include <net/inetpeer.h>
 #include <net/flow.h>
 #include <net/sock.h>
+// #include <linux/in.h>
 #include <linux/in_route.h>
 #include <linux/rtnetlink.h>
 #include <linux/route.h>
@@ -85,6 +86,11 @@ struct ip_rt_acct
 	__u32 	i_packets;
 };
 
+static inline int inet_iif(const struct sk_buff *skb)
+{
+	return skb->rtable->rt_iif;
+}
+
 struct rt_cache_stat 
 {
         unsigned int in_hit;
@@ -135,6 +141,9 @@ static inline void ip_rt_put(struct rtable * rt)
 		dst_release(&rt->u.dst);
 }
 
+#include <linux/vs_base.h>
+#include <linux/vs_inet.h>
+
 #define IPTOS_RT_MASK	(IPTOS_TOS_MASK & ~3)
 
 extern const __u8 ip_tos2prio[16];
@@ -143,6 +152,9 @@ static inline char rt_tos2priority(u8 tos)
 {
 	return ip_tos2prio[IPTOS_TOS(tos)>>1];
 }
+
+extern int ip_v4_find_src(struct net *net, struct nx_info *,
+	struct rtable **, struct flowi *);
 
 static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 				   __be32 src, u32 tos, int oif, u8 protocol,
@@ -161,7 +173,21 @@ static inline int ip_route_connect(struct rtable **rp, __be32 dst,
 
 	int err;
 	struct net *net = sock_net(sk);
-	if (!dst || !src) {
+	struct nx_info *nx_info = current->nx_info;
+
+	if (sk)
+		nx_info = sk->sk_nx_info;
+
+	vxdprintk(VXD_CBIT(net, 4),
+		"ip_route_connect(%p) %p,%p;%lx",
+		sk, nx_info, sk->sk_socket,
+		(sk->sk_socket?sk->sk_socket->flags:0));
+
+	err = ip_v4_find_src(net, nx_info, rp, &fl);
+	if (err)
+		return err;
+
+	if (!fl.fl4_dst || !fl.fl4_src) {
 		err = __ip_route_output_key(net, rp, &fl);
 		if (err)
 			return err;

@@ -9,6 +9,7 @@
 #include <linux/nsproxy.h>
 #include <linux/slab.h>
 #include <linux/user_namespace.h>
+#include <linux/vserver/global.h>
 
 /*
  * Clone a new ns copying an original user ns, setting refcount to 1
@@ -26,6 +27,7 @@ static struct user_namespace *clone_user_ns(struct user_namespace *old_ns)
 		return ERR_PTR(-ENOMEM);
 
 	kref_init(&ns->kref);
+	atomic_inc(&vs_global_user_ns);
 
 	for (n = 0; n < UIDHASH_SZ; ++n)
 		INIT_HLIST_HEAD(ns->uidhash_table + n);
@@ -71,6 +73,7 @@ void free_user_ns(struct kref *kref)
 
 	ns = container_of(kref, struct user_namespace, kref);
 	release_uids(ns);
+	atomic_dec(&vs_global_user_ns);
 	kfree(ns);
 }
 EXPORT_SYMBOL(free_user_ns);
