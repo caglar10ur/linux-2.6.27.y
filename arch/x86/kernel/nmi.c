@@ -52,7 +52,7 @@ static cpumask_t backtrace_mask = CPU_MASK_NONE;
 atomic_t nmi_active = ATOMIC_INIT(0);		/* oprofile uses this */
 EXPORT_SYMBOL(nmi_active);
 
-unsigned int nmi_watchdog = NMI_NONE;
+unsigned int nmi_watchdog = NMI_IO_APIC;
 EXPORT_SYMBOL(nmi_watchdog);
 
 static int panic_on_timeout;
