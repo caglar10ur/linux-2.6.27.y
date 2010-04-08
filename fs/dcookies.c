@@ -24,6 +24,7 @@
 #include <linux/errno.h>
 #include <linux/dcookies.h>
 #include <linux/mutex.h>
+#include <linux/spinlock.h>
 #include <linux/path.h>
 #include <asm/uaccess.h>
 
@@ -38,15 +39,21 @@ struct dcookie_struct {
 
 static LIST_HEAD(dcookie_users);
 static DEFINE_MUTEX(dcookie_mutex);
+spinlock_t dcookie_hash_write_lock = SPIN_LOCK_UNLOCKED;
 static struct kmem_cache *dcookie_cache __read_mostly;
-static struct list_head *dcookie_hashtable __read_mostly;
+static struct list_head *dcookie_hashtable[3] __read_mostly;
 static size_t hash_size __read_mostly;
+unsigned int current_hash = 1, old_hash = 0;
 
 static inline int is_live(void)
 {
 	return !(list_empty(&dcookie_users));
 }
 
+static inline int is_shared(void)
+{
+	return !(list_empty(&dcookie_users)) && !(list_empty(dcookie_users.next));
+}
 
 /* The dentry is locked, its address will do for the cookie */
 static inline unsigned long dcookie_value(struct dcookie_struct * dcs)
@@ -68,7 +75,7 @@ static struct dcookie_struct * find_dcookie(unsigned long dcookie)
 	struct list_head * pos;
 	struct list_head * list;
 
-	list = dcookie_hashtable + dcookie_hash(dcookie);
+	list = dcookie_hashtable[current_hash] + dcookie_hash(dcookie);
 
 	list_for_each(pos, list) {
 		dcs = list_entry(pos, struct dcookie_struct, hash_list);
@@ -78,21 +85,33 @@ static struct dcookie_struct * find_dcookie(unsigned long dcookie)
 		}
 	}
 
+    if (!found) {
+        list = dcookie_hashtable[old_hash] + dcookie_hash(dcookie);
+
+	list_for_each(pos, list) {
+		dcs = list_entry(pos, struct dcookie_struct, hash_list);
+		if (dcookie_value(dcs) == dcookie) {
+			found = dcs;
+			break;
+		}
+	}
+    }
+
+
 	return found;
 }
 
 
 static void hash_dcookie(struct dcookie_struct * dcs)
 {
-	struct list_head * list = dcookie_hashtable + dcookie_hash(dcookie_value(dcs));
+	struct list_head * list = dcookie_hashtable[current_hash] + dcookie_hash(dcookie_value(dcs));
 	list_add(&dcs->hash_list, list);
 }
 
 
 static struct dcookie_struct *alloc_dcookie(struct path *path)
 {
-	struct dcookie_struct *dcs = kmem_cache_alloc(dcookie_cache,
-							GFP_KERNEL);
+	struct dcookie_struct * dcs = kmem_cache_alloc(dcookie_cache, GFP_ATOMIC);
 	if (!dcs)
 		return NULL;
 
@@ -112,7 +131,7 @@ int get_dcookie(struct path *path, unsigned long *cookie)
 	int err = 0;
 	struct dcookie_struct * dcs;
 
-	mutex_lock(&dcookie_mutex);
+	spin_lock(&dcookie_hash_write_lock);
 
 	if (!is_live()) {
 		err = -EINVAL;
@@ -132,7 +151,7 @@ int get_dcookie(struct path *path, unsigned long *cookie)
 	*cookie = dcookie_value(dcs);
 
 out:
-	mutex_unlock(&dcookie_mutex);
+	spin_unlock(&dcookie_hash_write_lock);
 	return err;
 }
 
@@ -204,7 +223,7 @@ SYSCALL_ALIAS(sys_lookup_dcookie, SyS_lookup_dcookie);
 static int dcookie_init(void)
 {
 	struct list_head * d;
-	unsigned int i, hash_bits;
+	unsigned int i, j, hash_bits;
 	int err = -ENOMEM;
 
 	dcookie_cache = kmem_cache_create("dcookie_cache",
@@ -214,9 +233,11 @@ static int dcookie_init(void)
 	if (!dcookie_cache)
 		goto out;
 
-	dcookie_hashtable = kmalloc(PAGE_SIZE, GFP_KERNEL);
-	if (!dcookie_hashtable)
+    for (i=0; i<3; i++) { 
+        dcookie_hashtable[i] = kmalloc(PAGE_SIZE, GFP_KERNEL);
+        if (!dcookie_hashtable[i])
 		goto out_kmem;
+    }
 
 	err = 0;
 
@@ -239,13 +260,16 @@ static int dcookie_init(void)
 	hash_size = 1UL << hash_bits;
 
 	/* And initialize the newly allocated array */
-	d = dcookie_hashtable;
-	i = hash_size;
+
+    for (i=0; i<3; i++) {
+        d = dcookie_hashtable[i];
+        j = hash_size;
 	do {
 		INIT_LIST_HEAD(d);
 		d++;
-		i--;
-	} while (i);
+            j--;
+        } while (j);
+    }
 
 out:
 	return err;
@@ -262,17 +286,30 @@ static void free_dcookie(struct dcookie_struct * dcs)
 	kmem_cache_free(dcookie_cache, dcs);
 }
 
+int dcookie_swap(void) {
+    if (is_shared())
+        return -EAGAIN;
 
-static void dcookie_exit(void)
-{
+    old_hash=current_hash;
+    current_hash = (current_hash + 1) % 3;
+    return 0;
+}
+
+/* Switch to the second hash */
+int dcookie_garbage_collect(void) {
 	struct list_head * list;
 	struct list_head * pos;
 	struct list_head * pos2;
 	struct dcookie_struct * dcs;
 	size_t i;
+    int next_hash=(current_hash + 1) % 3;
 
+    if (is_shared())
+        return -EAGAIN;
+
+    /* XXX consider the consequence of dcookie allocation concurring with this cleanup */
 	for (i = 0; i < hash_size; ++i) {
-		list = dcookie_hashtable + i;
+		list = dcookie_hashtable[next_hash] + i;
 		list_for_each_safe(pos, pos2, list) {
 			dcs = list_entry(pos, struct dcookie_struct, hash_list);
 			list_del(&dcs->hash_list);
@@ -280,7 +317,30 @@ static void dcookie_exit(void)
 		}
 	}
 
-	kfree(dcookie_hashtable);
+    return 0;
+}
+
+static void dcookie_exit(void)
+{
+	struct list_head * list;
+	struct list_head * pos;
+	struct list_head * pos2;
+	struct dcookie_struct * dcs;
+	size_t j;
+    unsigned int i;
+
+    for (i = 0; i < 3; ++i) {
+        for (j = 0; j < hash_size; ++j) {
+            list = dcookie_hashtable[i] + j;
+		list_for_each_safe(pos, pos2, list) {
+			dcs = list_entry(pos, struct dcookie_struct, hash_list);
+			list_del(&dcs->hash_list);
+			free_dcookie(dcs);
+		}
+	}
+	    kfree(dcookie_hashtable[i]);
+    }
+
 	kmem_cache_destroy(dcookie_cache);
 }
 
@@ -330,3 +390,5 @@ void dcookie_unregister(struct dcookie_user * user)
 EXPORT_SYMBOL_GPL(dcookie_register);
 EXPORT_SYMBOL_GPL(dcookie_unregister);
 EXPORT_SYMBOL_GPL(get_dcookie);
+EXPORT_SYMBOL_GPL(dcookie_garbage_collect);
+EXPORT_SYMBOL_GPL(dcookie_swap);

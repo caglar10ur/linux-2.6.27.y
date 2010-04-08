@@ -46,6 +46,27 @@ void dcookie_unregister(struct dcookie_user * user);
  */
 int get_dcookie(struct path *path, unsigned long *cookie);
 
+/**
+ * dcookie_swap - switch to the next dcookie epoch
+ *
+ * Deactivate the current dcookie hash table and activate
+ * the next one
+ *
+ * Returns 0 on success
+ */
+
+int dcookie_swap(void);
+
+/**
+ * dcookie_garbage_collect - clear the hash table next in line
+ *
+ * Clear the hash table to be activated in the next epoch.
+ *
+ * Returns 0 on success
+ */
+
+int dcookie_garbage_collect(void);
+
 #else
 
 static inline struct dcookie_user * dcookie_register(void)
