@@ -17,8 +17,7 @@
 
 #include "pci.h"
 
-unsigned int pci_probe = PCI_PROBE_BIOS | PCI_PROBE_CONF1 | PCI_PROBE_CONF2 |
-				PCI_PROBE_MMCONF;
+unsigned int pci_probe = PCI_PROBE_BIOS | PCI_PROBE_CONF1 | PCI_PROBE_CONF2;
 
 unsigned int pci_early_dump_regs;
 static int pci_bf_sort;
@@ -475,6 +474,10 @@ char * __devinit  pcibios_setup(char *str)
 	}
 	else if (!strcmp(str, "check_enable_amd_mmconf")) {
 		pci_probe |= PCI_CHECK_ENABLE_AMD_MMCONF;
+		return NULL;
+	}
+	else if (!strcmp(str, "mmconf")) {
+		pci_probe |= PCI_PROBE_MMCONF;
 		return NULL;
 	}
 #endif
