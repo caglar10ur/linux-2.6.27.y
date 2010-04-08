@@ -857,6 +857,7 @@ static inline void netif_napi_del(struct napi_struct *napi)
 struct packet_type {
 	__be16			type;	/* This is really htons(ether_type). */
 	struct net_device	*dev;	/* NULL is wildcarded here	     */
+	unsigned char 		sknid_elevator; 
 	int			(*func) (struct sk_buff *,
 					 struct net_device *,
 					 struct packet_type *,

@@ -99,6 +99,8 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/stat.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
 #include <linux/if_bridge.h>
 #include <linux/if_macvlan.h>
 #include <net/dst.h>
@@ -1318,7 +1320,7 @@ static void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 		if ((ptype->dev == dev || !ptype->dev) &&
 		    (ptype->af_packet_priv == NULL ||
 		     (struct sock *)ptype->af_packet_priv != skb->sk)) {
-			struct sk_buff *skb2= skb_clone(skb, GFP_ATOMIC);
+			struct sk_buff *skb2 = skb_clone(skb, GFP_ATOMIC);
 			if (!skb2)
 				break;
 
@@ -2170,6 +2172,10 @@ void netif_nit_deliver(struct sk_buff *skb)
 	rcu_read_unlock();
 }
 
+/* The code already makes the assumption that packet handlers run
+ * sequentially on the same CPU. -Sapan */
+DEFINE_PER_CPU(int, sknid_elevator) = 0;
+
 /**
  *	netif_receive_skb - process receive buffer from network
  *	@skb: buffer to process
@@ -2191,7 +2197,10 @@ int netif_receive_skb(struct sk_buff *skb)
 	struct net_device *orig_dev;
 	struct net_device *null_or_orig;
 	int ret = NET_RX_DROP;
+ 	int *cur_elevator = &__get_cpu_var(sknid_elevator);
 	__be16 type;
+
+ 	*cur_elevator = 0;
 
 	if (skb->vlan_tci && vlan_hwaccel_do_receive(skb))
 		return NET_RX_SUCCESS;
@@ -2272,7 +2281,27 @@ ncls:
 	}
 
 	if (pt_prev) {
+		/* At this point, cur_elevator may be -2 or a positive value, in
+		 * case a previous protocol handler marked it */
+		if (*cur_elevator) {
+			atomic_inc(&skb->users);
+		}
+		
 		ret = pt_prev->func(skb, skb->dev, pt_prev, orig_dev);
+
+		if ((*cur_elevator)>0) {
+			skb->skb_tag = *cur_elevator;
+			list_for_each_entry_rcu(ptype, &ptype_all, list) {
+				if ((!ptype->dev || ptype->dev == skb->dev) && (ptype->sknid_elevator)) {
+					ret = deliver_skb(skb, ptype, orig_dev);
+				}
+			}
+		}
+
+		if (*cur_elevator) {
+			/* We have a packet */
+			kfree_skb(skb);
+		}
 	} else {
 		kfree_skb(skb);
 		/* Jamal, now you will not able to escape explaining
@@ -4895,6 +4924,7 @@ EXPORT_SYMBOL(unregister_netdevice_notifier);
 EXPORT_SYMBOL(net_enable_timestamp);
 EXPORT_SYMBOL(net_disable_timestamp);
 EXPORT_SYMBOL(dev_get_flags);
+EXPORT_PER_CPU_SYMBOL(sknid_elevator);
 
 #if defined(CONFIG_BRIDGE) || defined(CONFIG_BRIDGE_MODULE)
 EXPORT_SYMBOL(br_handle_frame_hook);

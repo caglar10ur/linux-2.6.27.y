@@ -77,6 +77,7 @@
 #include <linux/poll.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/vs_network.h>
 #include <linux/mutex.h>
 
 #ifdef CONFIG_INET
@@ -278,10 +279,53 @@ static const struct proto_ops packet_ops;
 
 static const struct proto_ops packet_ops_spkt;
 
+extern DEFINE_PER_CPU(int, sknid_elevator);
+
+static inline unsigned int slice_check_and_elevate(struct sk_buff *skb, struct sock *sk) {
+	/* This mechanism is quite involved, and caused us a lot of pain
+	 * including crashes and packet loss during the 4.2 rollout. This
+	 * function decides if a slice is allowed to see a given packet.
+	 * Unfortunately, the first time it is invoked for a packet it does not
+	 * have enough information to make this call, since xt_MARK has not had
+	 * a chance to tag it with the slice id.  There is also no way of
+	 * passing state between xt_MARK and this function through a packet --
+	 * because the skb gets cloned quite a few times between these two
+	 * points.  I'd rather not use skb_shared_info because it's treated as
+	 * a blob of memory, and so it would be quite hard to maintain.
+	 *
+	 * What we do is to keep a global variable (per CPU) that transfers the
+	 * required state between xt_MARK and af_packet.c. As an optimization,
+	 * this state transfer and the step that follows is only executed for
+	 * packets that first get dropped here. When we drop a packet, we mark
+	 * it for 'elevation' (that's what this trick is called). When xt_MARK
+	 * tags the packet with the right slice, it intercepts this mark and
+	 * sets the value of sknid_elevator. Next, the packet is sent back here
+	 * for a second round, this time with the xid tag set.
+	 */
+
+	int *elevator=&__get_cpu_var(sknid_elevator);
+	int tag = skb->skb_tag;
+
+	if (sk->sk_nx_info && !(tag == 1 || sk->sk_nid == tag)) {
+		if (skb->pkt_type==PACKET_HOST) {
+			*elevator=-2; /* Rejecting this packet. Mark it for elevation in xt_MARK */
+		}
+		return 0;
+	}
+	else if (!sk->sk_nx_info && (*elevator>0)) {
+		/* Root has already seen this packet once, since it has been elevated */
+		return 0;
+	}
+
+	return 1;
+}
+
 static int packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev,  struct packet_type *pt, struct net_device *orig_dev)
 {
 	struct sock *sk;
 	struct sockaddr_pkt *spkt;
+	int tag = skb->skb_tag;
+
 
 	/*
 	 *	When we registered the protocol we saved the socket in the data
@@ -300,6 +344,16 @@ static int packet_rcv_spkt(struct sk_buff *skb, struct net_device *dev,  struct 
 	 *	For outgoing ones skb->data == skb_mac_header(skb)
 	 *	so that this procedure is noop.
 	 */
+
+	/* 
+	 * (18:05:41) daniel_hozac: where?
+	 * (18:05:58) daniel_hozac: we already have filters on PF_PACKET, don't we?
+	 * (18:05:58) er: in packet_rcv_skpt
+	 * (18:07:33) daniel_hozac: oh, that's evil. 
+	 */
+
+	if (!slice_check_and_elevate(skb, sk))
+		return 0;
 
 	if (skb->pkt_type == PACKET_LOOPBACK)
 		goto out;
@@ -358,6 +412,9 @@ static int packet_sendmsg_spkt(struct kiocb *iocb, struct socket *sock,
 	struct net_device *dev;
 	__be16 proto=0;
 	int err;
+
+	if (!nx_capable(CAP_NET_RAW, NXC_RAW_SEND))
+		return -EPERM;
 
 	/*
 	 *	Get and verify the address.
@@ -451,10 +508,15 @@ out_unlock:
 	return err;
 }
 
+
+
 static inline unsigned int run_filter(struct sk_buff *skb, struct sock *sk,
 				      unsigned int res)
 {
 	struct sk_filter *filter;
+
+	if (!slice_check_and_elevate(skb, sk)) 
+		return 0;
 
 	rcu_read_lock_bh();
 	filter = rcu_dereference(sk->sk_filter);
@@ -775,6 +837,9 @@ static int packet_sendmsg(struct kiocb *iocb, struct socket *sock,
 	unsigned char *addr;
 	int ifindex, err, reserve = 0;
 
+	if (!nx_capable(CAP_NET_RAW, NXC_RAW_SEND)) 
+		return -EPERM;
+
 	/*
 	 *	Get and verify the address.
 	 */
@@ -941,6 +1006,7 @@ static int packet_do_bind(struct sock *sk, struct net_device *dev, __be16 protoc
 
 	po->num = protocol;
 	po->prot_hook.type = protocol;
+	po->prot_hook.sknid_elevator = 1;
 	po->prot_hook.dev = dev;
 
 	po->ifindex = dev ? dev->ifindex : 0;
@@ -1039,8 +1105,9 @@ static int packet_create(struct net *net, struct socket *sock, int protocol)
 	__be16 proto = (__force __be16)protocol; /* weird, but documented */
 	int err;
 
-	if (!capable(CAP_NET_RAW))
+	if (!nx_capable(CAP_NET_RAW, NXC_RAW_SOCKET))
 		return -EPERM;
+		
 	if (sock->type != SOCK_DGRAM && sock->type != SOCK_RAW &&
 	    sock->type != SOCK_PACKET)
 		return -ESOCKTNOSUPPORT;
@@ -1072,6 +1139,7 @@ static int packet_create(struct net *net, struct socket *sock, int protocol)
 	spin_lock_init(&po->bind_lock);
 	mutex_init(&po->pg_vec_lock);
 	po->prot_hook.func = packet_rcv;
+ 	po->prot_hook.sknid_elevator = 1;
 
 	if (sock->type == SOCK_PACKET)
 		po->prot_hook.func = packet_rcv_spkt;
