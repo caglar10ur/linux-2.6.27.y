@@ -632,3 +632,14 @@ config TCP_MD5SIG
 
 source "net/ipv4/ipvs/Kconfig"
 
+#
+# Emulab special
+#
+
+config ICMP_IPOD
+	bool "ICMP: ICMP Ping-of-Death (Emulab)"
+	depends on INET && SYSCTL
+	---help---
+          Support immediately rebooting upon receiving a specially
+	  formed ICMP type 6 packet whose payload matches a string
+	  configured by the administrator.

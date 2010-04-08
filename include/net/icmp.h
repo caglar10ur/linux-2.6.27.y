@@ -59,4 +59,12 @@ static inline struct raw_sock *raw_sk(const struct sock *sk)
 	return (struct raw_sock *)sk;
 }
 
+#ifdef CONFIG_ICMP_IPOD
+extern int sysctl_icmp_ipod_version;
+extern int sysctl_icmp_ipod_enabled;
+extern u32 sysctl_icmp_ipod_host;
+extern u32 sysctl_icmp_ipod_mask;
+extern char sysctl_icmp_ipod_key[32+1];
+#endif
+
 #endif	/* _ICMP_H */
