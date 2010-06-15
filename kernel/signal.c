@@ -573,10 +573,11 @@ static int check_kill_permission(int sig, struct siginfo *info,
 	if (!valid_signal(sig))
 		return -EINVAL;
 
+/*
 	if ((info != SEND_SIG_NOINFO) &&
 		(is_si_special(info) || !SI_FROMUSER(info)))
 		goto skip;
-
+*/
 	vxdprintk(VXD_CBIT(misc, 7),
 		"check_kill_permission(%d,%p,%p[#%u,%u])",
 		sig, info, t, vx_task_xid(t), t->pid);
@@ -610,13 +611,17 @@ static int check_kill_permission(int sig, struct siginfo *info,
 		return error;
 
 	error = -ESRCH;
+	/* FIXME: we shouldn't return ESRCH ever, to avoid
+		  loops, maybe ENOENT or EACCES? */
 	if (!vx_check(vx_task_xid(t), VS_WATCH_P | VS_IDENT)) {
 		vxdprintk(current->xid || VXD_CBIT(misc, 7),
 			"signal %d[%p] xid mismatch %p[#%u,%u] xid=#%u",
 			sig, info, t, vx_task_xid(t), t->pid, current->xid);
 		return error;
 	}
+/*
 skip:
+*/
 	return security_task_kill(t, info, sig, 0);
 }
 
@@ -1074,7 +1079,7 @@ int kill_pid_info(int sig, struct siginfo *info, struct pid *pid)
 	rcu_read_lock();
 retry:
 	p = pid_task(pid, PIDTYPE_PID);
-	if (p && vx_check(vx_task_xid(p), VS_ADMIN | VS_IDENT)) {
+	if (p && vx_check(vx_task_xid(p), VS_IDENT)) {
 		error = group_send_sig_info(sig, info, p);
 		if (unlikely(error == -ESRCH))
 			/*
